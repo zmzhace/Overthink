@@ -6,6 +6,11 @@ import type { HomeAgentPromptEvent, TabsSnapshot } from "@/shared/ipc";
 import type { AgentStepEvent, ChatStreamEvent, ResearchEvent } from "@/shared/overthink";
 
 const bridge: OverthinkBridge = {
+  window: {
+    minimize: () => ipcRenderer.invoke(IPC_CHANNELS.windowMinimize),
+    toggleMaximize: () => ipcRenderer.invoke(IPC_CHANNELS.windowToggleMaximize),
+    close: () => ipcRenderer.invoke(IPC_CHANNELS.windowClose)
+  },
   tabs: {
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.tabsGetState),
     create: (url) => ipcRenderer.invoke(IPC_CHANNELS.tabsCreate, url),

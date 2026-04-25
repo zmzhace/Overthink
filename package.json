@@ -38,9 +38,11 @@
     "files": [
       "dist-electron/**/*",
       "dist-renderer/**/*",
+      "assets/**/*",
       "package.json"
     ],
     "win": {
+      "icon": "assets/overthink-icon.ico",
       "target": [
         "nsis"
       ]

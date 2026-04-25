@@ -35,6 +35,11 @@ import type {
 } from "./overthink";
 
 export interface OverthinkBridge {
+  window: {
+    minimize: () => Promise<void>;
+    toggleMaximize: () => Promise<void>;
+    close: () => Promise<void>;
+  };
   tabs: {
     getState: () => Promise<TabsSnapshot>;
     create: (url?: string) => Promise<TabsSnapshot>;

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, protocol } from "electron";
 import path from "node:path";
 
-import { APP_NAME, OVERTHINK_SCHEME } from "@/shared/branding";
+import { APP_ID, APP_NAME, OVERTHINK_SCHEME } from "@/shared/branding";
 
 import { renderHomePage } from "./home-page";
 import { registerIpcHandlers } from "./ipc";
@@ -13,6 +13,7 @@ let mainWindow: BrowserWindow | null = null;
 let tabs: OverthinkTabs | null = null;
 
 const isDev = !app.isPackaged;
+const appIconPath = path.join(app.getAppPath(), "assets", process.platform === "win32" ? "overthink-icon.ico" : "overthink-icon.png");
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -53,6 +54,8 @@ async function createWindow(): Promise<void> {
     minWidth: 1024,
     minHeight: 700,
     show: false,
+    frame: false,
+    icon: appIconPath,
     title: APP_NAME,
     backgroundColor: "#f6f7f9",
     webPreferences: {
@@ -93,6 +96,7 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   app.setName(APP_NAME);
+  app.setAppUserModelId(APP_ID);
   registerAppProtocol();
   Menu.setApplicationMenu(null);
   await createWindow();

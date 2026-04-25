@@ -29,6 +29,20 @@ export function registerIpcHandlers({ mainWindow, tabs, storage }: RegisterIpcHa
 
   void extensionService.loadEnabledExtensions();
 
+  ipcMain.handle(IPC_CHANNELS.windowMinimize, () => {
+    mainWindow.minimize();
+  });
+  ipcMain.handle(IPC_CHANNELS.windowToggleMaximize, () => {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+      return;
+    }
+    mainWindow.maximize();
+  });
+  ipcMain.handle(IPC_CHANNELS.windowClose, () => {
+    mainWindow.close();
+  });
+
   ipcMain.handle(IPC_CHANNELS.tabsGetState, () => tabs.getSnapshot());
   ipcMain.handle(IPC_CHANNELS.tabsCreate, (_event, url?: string) => tabs.createTab(url));
   ipcMain.handle(IPC_CHANNELS.tabsActivate, (_event, tabId: number) => tabs.activateTab(tabId));

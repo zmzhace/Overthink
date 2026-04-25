@@ -1276,14 +1276,19 @@ button {
 }
 
 .top-chrome {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: end;
+  padding: 5px 0 0 8px;
   border-bottom-color: #dce3ec;
   background: #eef2f6;
+  -webkit-app-region: drag;
 }
 
 .window-brand {
   min-width: 120px;
   color: #14181f;
+  -webkit-app-region: drag;
 }
 
 .window-brand-mark {
@@ -1304,6 +1309,47 @@ button {
 
 .tab-dot {
   background: #0f766e;
+}
+
+.tab-strip,
+.tab-item,
+.tab-close,
+.new-tab-button,
+.toolbar,
+.overthink-pane,
+.window-controls,
+.window-controls button {
+  -webkit-app-region: no-drag;
+}
+
+.window-controls {
+  display: grid;
+  grid-template-columns: repeat(3, 46px);
+  align-self: stretch;
+  height: 35px;
+}
+
+.window-controls button {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 35px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #4b5563;
+  cursor: pointer;
+}
+
+.window-controls button:hover {
+  background: #dfe5ee;
+  color: #111827;
+}
+
+.window-controls .close-window:hover {
+  background: #c42b1c;
+  color: #ffffff;
 }
 
 .toolbar {

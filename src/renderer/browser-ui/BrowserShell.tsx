@@ -3,6 +3,8 @@ import {
   ArrowRight,
   BrainCircuit,
   Home,
+  Maximize2,
+  Minus,
   PanelRight,
   Plus,
   RefreshCw,
@@ -190,6 +192,28 @@ export function BrowserShell() {
             type="button"
           >
             <Plus size={16} />
+          </button>
+        </div>
+        <div className="window-controls" aria-label="Window controls">
+          <button aria-label="Minimize" onClick={() => void window.overthink.window.minimize()} title="Minimize" type="button">
+            <Minus size={14} />
+          </button>
+          <button
+            aria-label="Maximize"
+            onClick={() => void window.overthink.window.toggleMaximize()}
+            title="Maximize"
+            type="button"
+          >
+            <Maximize2 size={13} />
+          </button>
+          <button
+            aria-label="Close window"
+            className="close-window"
+            onClick={() => void window.overthink.window.close()}
+            title="Close"
+            type="button"
+          >
+            <X size={14} />
           </button>
         </div>
       </header>
