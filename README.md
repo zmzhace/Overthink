@@ -12,7 +12,12 @@
 - `OverthinkPageRuntime` 提供页面摘要、frame 文本与页面脚本执行
 - `OverthinkDebugger` 提供 CDP 点击、输入、滚动、键盘和截图支撑
 - `OverthinkModelService` 提供 OpenAI-compatible 模型配置、连接测试和流式 Think Chat
-- `OverthinkDocumentExtractor` 提供 txt/pdf 本地文本抽取
+- `OverthinkAgentRuntime` 提供可恢复任务、模型规划、低风险自动执行和高风险审批
+- `OverthinkResearchRuntime` 提供搜索 API + 浏览器搜索回退、来源抓取和可溯源 Deep Dive
+- `OverthinkDocumentExtractor` 提供 txt/pdf 本地文本抽取和 vision model OCR
+- `OverthinkExtensionService` 提供本地 unpacked MV3 扩展加载、启停和卸载
+- Recall 会自动进入 Think Chat、Agent 和 Deep Dive 上下文
+- 导入导出 schema v2 覆盖模型、聊天、Recall、Deep Dive、任务和扩展元数据
 
 ## 本地开发
 

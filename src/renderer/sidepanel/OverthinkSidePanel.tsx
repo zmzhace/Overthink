@@ -3,6 +3,7 @@ import {
   BookOpenText,
   Camera,
   CheckCircle2,
+  ClipboardList,
   Database,
   Download,
   FileText,
@@ -15,6 +16,7 @@ import {
   Search,
   SendHorizontal,
   Settings,
+  Puzzle,
   Square,
   Trash2,
   Upload
@@ -25,14 +27,19 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { BrowserTabState } from "@/shared/ipc";
 import type {
   AgentStepEvent,
+  DeepDiveRecord,
   DocumentExtraction,
+  ExtensionRecord,
   ImportSummary,
   ModelProviderConfig,
   ModelProviderDraft,
   ModelSettingsState,
   ModelTestResult,
+  OverthinkTask,
   PageBrief,
   RecallItem,
+  SearchProviderConfig,
+  SearchProviderDraft,
   ThinkChatSession,
   ThinkMessage
 } from "@/shared/overthink";
@@ -41,15 +48,8 @@ interface OverthinkSidePanelProps {
   activeTab: BrowserTabState | null;
 }
 
-type PanelTab = "chat" | "agent" | "dive" | "recall" | "models" | "data";
+type PanelTab = "chat" | "agent" | "dive" | "recall" | "tasks" | "extensions" | "models" | "data";
 type BusyState = "idle" | "brief" | "shot" | "doc" | "chat" | "dive" | "model";
-
-interface DeepDiveRecord {
-  id: string;
-  query: string;
-  result: string;
-  createdAt: string;
-}
 
 const CHAT_KEY = "thinkChatSessions";
 const RECALL_KEY = "recallItems";
@@ -60,6 +60,8 @@ const PANEL_TABS: Array<{ id: PanelTab; icon: LucideIcon; label: string }> = [
   { id: "agent", icon: Play, label: "Agent" },
   { id: "dive", icon: Search, label: "Deep Dive" },
   { id: "recall", icon: Database, label: "Recall" },
+  { id: "tasks", icon: ClipboardList, label: "Tasks" },
+  { id: "extensions", icon: Puzzle, label: "Extensions" },
   { id: "models", icon: Settings, label: "Models" },
   { id: "data", icon: Upload, label: "Data" }
 ];
@@ -67,7 +69,9 @@ const PANEL_TABS: Array<{ id: PanelTab; icon: LucideIcon; label: string }> = [
 const emptySettings = (): ModelSettingsState => ({
   providers: [],
   activeProviderId: null,
-  activeVisionProviderId: null
+  activeVisionProviderId: null,
+  searchProviders: [],
+  activeSearchProviderId: null
 });
 
 function makeId(): string {
@@ -141,6 +145,46 @@ function draftToProvider(draft: ModelProviderDraft, existing?: ModelProviderConf
   };
 }
 
+function blankSearchProviderDraft(): SearchProviderDraft {
+  return {
+    id: makeId(),
+    name: "",
+    kind: "brave",
+    baseUrl: "",
+    apiKey: "",
+    enabled: true
+  };
+}
+
+function searchProviderToDraft(provider: SearchProviderConfig | null): SearchProviderDraft {
+  if (!provider) {
+    return blankSearchProviderDraft();
+  }
+
+  return {
+    id: provider.id,
+    name: provider.name,
+    kind: provider.kind,
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    enabled: provider.enabled
+  };
+}
+
+function draftToSearchProvider(draft: SearchProviderDraft, existing?: SearchProviderConfig): SearchProviderConfig {
+  const now = nowIso();
+  return {
+    id: draft.id || makeId(),
+    name: draft.name.trim() || "Search provider",
+    kind: draft.kind,
+    baseUrl: draft.baseUrl.trim(),
+    apiKey: draft.apiKey.trim(),
+    enabled: draft.enabled,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now
+  };
+}
+
 function createMessage(role: ThinkMessage["role"], content: string): ThinkMessage {
   return {
     id: makeId(),
@@ -151,7 +195,7 @@ function createMessage(role: ThinkMessage["role"], content: string): ThinkMessag
 }
 
 function importSummaryLine(summary: ImportSummary): string {
-  return `${summary.message} Models ${summary.modelProviders}, chats ${summary.chatSessions}, recall ${summary.recallItems}.`;
+  return `${summary.message} Models ${summary.modelProviders}, chats ${summary.chatSessions}, recall ${summary.recallItems}, research ${summary.deepDives}, tasks ${summary.tasks}, extensions ${summary.extensions}.`;
 }
 
 export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
@@ -161,6 +205,7 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [settings, setSettings] = useState<ModelSettingsState>(emptySettings);
   const [providerDraft, setProviderDraft] = useState<ModelProviderDraft>(blankProviderDraft);
+  const [searchProviderDraft, setSearchProviderDraft] = useState<SearchProviderDraft>(blankSearchProviderDraft);
   const [modelTest, setModelTest] = useState<ModelTestResult | null>(null);
   const [pageBrief, setPageBrief] = useState<PageBrief | null>(null);
   const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
@@ -182,6 +227,8 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
   const [recallItems, setRecallItems] = useState<RecallItem[]>([]);
   const [recallDraft, setRecallDraft] = useState("");
   const [recallQuery, setRecallQuery] = useState("");
+  const [tasks, setTasks] = useState<OverthinkTask[]>([]);
+  const [extensions, setExtensions] = useState<ExtensionRecord[]>([]);
 
   const messagesRef = useRef<ThinkMessage[]>([]);
   const sessionsRef = useRef<ThinkChatSession[]>([]);
@@ -242,7 +289,7 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
   useEffect(() => {
     const openSection = (event: Event) => {
       const detail = (event as CustomEvent<PanelTab>).detail;
-      if (["chat", "agent", "dive", "recall", "models", "data"].includes(detail)) {
+      if (["chat", "agent", "dive", "recall", "tasks", "extensions", "models", "data"].includes(detail)) {
         setSelectedTab(detail);
       }
     };
@@ -268,9 +315,15 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
       if (event.streamId === activeChatStreamRef.current) {
         handleChatEvent(event.type, event.delta, event.message);
       }
+    });
 
-      if (event.streamId === activeDeepStreamRef.current) {
-        handleDeepEvent(event.type, event.delta, event.message);
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = window.overthink.research.onEvent((event) => {
+      if (event.researchId === activeDeepStreamRef.current) {
+        handleDeepEvent(event.type, event.delta, event.message, event.record);
       }
     });
 
@@ -284,6 +337,9 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
       }
 
       setAgentSteps((items) => [...items, event]);
+      if (event.task) {
+        setTasks((items) => [event.task as OverthinkTask, ...items.filter((item) => item.id !== event.task?.id)]);
+      }
       if (["complete", "error", "stopped"].includes(event.type)) {
         setActiveTaskId(null);
         activeTaskRef.current = null;
@@ -313,9 +369,14 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
 
     setSettings(nextSettings);
     setProviderDraft(providerToDraft(nextSettings.providers.find((provider) => provider.id === nextSettings.activeProviderId) ?? null));
+    setSearchProviderDraft(
+      searchProviderToDraft(nextSettings.searchProviders.find((provider) => provider.id === nextSettings.activeSearchProviderId) ?? null)
+    );
     setSessions(Array.isArray(stored.thinkChatSessions) ? stored.thinkChatSessions : []);
     setRecallItems(Array.isArray(stored.recallItems) ? stored.recallItems : []);
     setDeepHistory(Array.isArray(stored.deepDiveHistory) ? stored.deepDiveHistory : []);
+    setTasks(await window.overthink.tasks.list());
+    setExtensions(await window.overthink.extensions.list());
   };
 
   const saveChatSession = async (nextMessages: ThinkMessage[]) => {
@@ -512,7 +573,9 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
     const nextSettings = await window.overthink.models.saveSettings({
       providers,
       activeProviderId: provider.id,
-      activeVisionProviderId: provider.visionModel ? provider.id : settings.activeVisionProviderId ?? provider.id
+      activeVisionProviderId: provider.visionModel ? provider.id : settings.activeVisionProviderId ?? provider.id,
+      searchProviders: settings.searchProviders,
+      activeSearchProviderId: settings.activeSearchProviderId
     });
     setSettings(nextSettings);
     setProviderDraft(providerToDraft(provider));
@@ -536,10 +599,44 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
     const nextSettings = await window.overthink.models.saveSettings({
       providers,
       activeProviderId: providers[0]?.id ?? null,
-      activeVisionProviderId: providers[0]?.id ?? null
+      activeVisionProviderId: providers[0]?.id ?? null,
+      searchProviders: settings.searchProviders,
+      activeSearchProviderId: settings.activeSearchProviderId
     });
     setSettings(nextSettings);
     setProviderDraft(providerToDraft(nextSettings.providers[0] ?? null));
+  };
+
+  const saveSearchProvider = async () => {
+    if (!searchProviderDraft.baseUrl.trim()) {
+      setModelTest({ ok: false, status: null, message: "Search Base URL is required.", latencyMs: 0 });
+      return;
+    }
+
+    const existing = settings.searchProviders.find((provider) => provider.id === searchProviderDraft.id);
+    const provider = draftToSearchProvider(searchProviderDraft, existing);
+    const searchProviders = existing
+      ? settings.searchProviders.map((item) => (item.id === provider.id ? provider : item))
+      : [...settings.searchProviders, provider];
+    const nextSettings = await window.overthink.models.saveSettings({
+      ...settings,
+      searchProviders,
+      activeSearchProviderId: provider.id
+    });
+    setSettings(nextSettings);
+    setSearchProviderDraft(searchProviderToDraft(provider));
+    setModelTest({ ok: true, status: null, message: "Search provider saved.", latencyMs: 0 });
+  };
+
+  const deleteSearchProvider = async (providerId: string) => {
+    const searchProviders = settings.searchProviders.filter((provider) => provider.id !== providerId);
+    const nextSettings = await window.overthink.models.saveSettings({
+      ...settings,
+      searchProviders,
+      activeSearchProviderId: searchProviders[0]?.id ?? null
+    });
+    setSettings(nextSettings);
+    setSearchProviderDraft(searchProviderToDraft(nextSettings.searchProviders[0] ?? null));
   };
 
   const startAgent = async () => {
@@ -596,28 +693,17 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
       return;
     }
 
-    if (!hasModelConfig) {
-      setSelectedTab("models");
-      setError("Model Settings are required before Deep Dive can call a model.");
-      return;
-    }
-
     setBusy("dive");
     setDeepOutput("");
     deepOutputRef.current = "";
     setError(null);
 
     try {
-      const streamId = await window.overthink.chat.start({
-        sessionId: makeId(),
-        providerId: settings.activeProviderId,
-        messages: [
-          {
-            role: "user",
-            content: `Deep Dive request:\n${query}\n\nReturn a structured report with claims, evidence, gaps, and next checks.`
-          }
-        ],
-        context: { pageBrief, documents }
+      const streamId = await window.overthink.research.start({
+        query,
+        tabId: activeTab?.id,
+        pageBrief,
+        documents
       });
       activeDeepStreamRef.current = streamId;
     } catch (nextError) {
@@ -626,7 +712,7 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
     }
   };
 
-  const handleDeepEvent = (type: string, delta?: string, message?: string) => {
+  const handleDeepEvent = (type: string, delta?: string, message?: string, record?: DeepDiveRecord) => {
     if (type === "delta" && delta) {
       deepOutputRef.current += delta;
       setDeepOutput(deepOutputRef.current);
@@ -640,17 +726,20 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
 
     if (["complete", "error", "stopped"].includes(type)) {
       setBusy("idle");
-      const record: DeepDiveRecord = {
-        id: makeId(),
-        query: deepQueryRef.current.trim(),
-        result: deepOutputRef.current,
-        createdAt: nowIso()
-      };
-      const nextHistory = [record, ...deepHistoryRef.current].slice(0, 12);
+      const nextRecord =
+        record ??
+        ({
+          id: makeId(),
+          query: deepQueryRef.current.trim(),
+          result: deepOutputRef.current,
+          sources: [],
+          citations: [],
+          createdAt: nowIso()
+        } satisfies DeepDiveRecord);
+      const nextHistory = [nextRecord, ...deepHistoryRef.current.filter((item) => item.id !== nextRecord.id)].slice(0, 12);
       deepHistoryRef.current = nextHistory;
       setDeepHistory(nextHistory);
       activeDeepStreamRef.current = null;
-      void window.overthink.storage.set("local", { [DEEP_DIVE_KEY]: nextHistory });
     }
   };
 
@@ -684,6 +773,36 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
     const nextItems = recallItems.filter((item) => item.id !== itemId);
     setRecallItems(nextItems);
     await window.overthink.storage.set("local", { [RECALL_KEY]: nextItems });
+  };
+
+  const approveAgentAction = async (taskId: string, approvalId: string) => {
+    const task = await window.overthink.tasks.approve(taskId, approvalId);
+    if (task) {
+      setTasks((items) => [task, ...items.filter((item) => item.id !== task.id)]);
+    }
+  };
+
+  const rejectAgentAction = async (taskId: string, approvalId: string) => {
+    const task = await window.overthink.tasks.reject(taskId, approvalId);
+    if (task) {
+      setTasks((items) => [task, ...items.filter((item) => item.id !== task.id)]);
+    }
+  };
+
+  const installExtension = async () => {
+    const record = await window.overthink.extensions.install();
+    if (record) {
+      setExtensions(await window.overthink.extensions.list());
+      setNotice(`Installed ${record.name}.`);
+    }
+  };
+
+  const setExtensionEnabled = async (extensionId: string, enabled: boolean) => {
+    setExtensions(await window.overthink.extensions.setEnabled(extensionId, enabled));
+  };
+
+  const removeExtension = async (extensionId: string) => {
+    setExtensions(await window.overthink.extensions.remove(extensionId));
   };
 
   const exportData = async () => {
@@ -745,6 +864,8 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
         {selectedTab === "agent" ? renderAgent() : null}
         {selectedTab === "dive" ? renderDeepDive() : null}
         {selectedTab === "recall" ? renderRecall() : null}
+        {selectedTab === "tasks" ? renderTasks() : null}
+        {selectedTab === "extensions" ? renderExtensions() : null}
         {selectedTab === "models" ? renderModels() : null}
         {selectedTab === "data" ? renderData() : null}
       </section>
@@ -916,6 +1037,16 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
             <div className={`agent-step ${step.type}`} key={`${step.taskId}-${index}`}>
               <strong>{step.title}</strong>
               {step.detail ? <p>{step.detail}</p> : null}
+              {step.approval?.status === "pending" ? (
+                <div className="approval-actions">
+                  <button onClick={() => void approveAgentAction(step.taskId, step.approval?.id ?? "")} type="button">
+                    Approve
+                  </button>
+                  <button onClick={() => void rejectAgentAction(step.taskId, step.approval?.id ?? "")} type="button">
+                    Reject
+                  </button>
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
@@ -994,6 +1125,90 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
                 </button>
                 <button onClick={() => void deleteRecall(item.id)} type="button">
                   <Trash2 size={13} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderTasks() {
+    const pendingApprovals = tasks.flatMap((task) =>
+      task.approvals.filter((approval) => approval.status === "pending").map((approval) => ({ task, approval }))
+    );
+
+    return (
+      <div className="panel-stack">
+        {pendingApprovals.length ? (
+          <div className="card-list">
+            {pendingApprovals.map(({ task, approval }) => (
+              <div className="task-card" key={approval.id}>
+                <strong>{approval.title}</strong>
+                <small>{task.objective}</small>
+                <p>{approval.detail}</p>
+                <div className="approval-actions">
+                  <button onClick={() => void approveAgentAction(task.id, approval.id)} type="button">
+                    Approve
+                  </button>
+                  <button onClick={() => void rejectAgentAction(task.id, approval.id)} type="button">
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="card-list">
+          {tasks.length === 0 ? <div className="empty-panel">Tasks</div> : null}
+          {tasks.map((task) => (
+            <div className="task-card" key={task.id}>
+              <strong>{task.objective}</strong>
+              <small>
+                {task.status} - {task.steps.length} steps
+              </small>
+              {task.finalAnswer ? <p>{truncate(task.finalAnswer, 260)}</p> : null}
+              {task.error ? <p>{task.error}</p> : null}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderExtensions() {
+    return (
+      <div className="panel-stack">
+        <div className="button-row">
+          <button onClick={installExtension} type="button">
+            <Plus size={15} />
+            <span>Install</span>
+          </button>
+          <button onClick={() => void window.overthink.extensions.list().then(setExtensions)} type="button">
+            <RotateCcw size={15} />
+            <span>Refresh</span>
+          </button>
+        </div>
+        <div className="card-list">
+          {extensions.length === 0 ? <div className="empty-panel">Extensions</div> : null}
+          {extensions.map((extension) => (
+            <div className="task-card" key={extension.id}>
+              <strong>{extension.name}</strong>
+              <small>
+                {extension.version} - {extension.enabled ? "Enabled" : "Disabled"}
+              </small>
+              <p>{truncate(extension.path, 180)}</p>
+              {extension.warnings.map((warning) => (
+                <p key={warning}>{warning}</p>
+              ))}
+              <div className="approval-actions">
+                <button onClick={() => void setExtensionEnabled(extension.id, !extension.enabled)} type="button">
+                  {extension.enabled ? "Disable" : "Enable"}
+                </button>
+                <button onClick={() => void removeExtension(extension.id)} type="button">
+                  Remove
                 </button>
               </div>
             </div>
@@ -1105,6 +1320,94 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
             <small>{modelTest.latencyMs} ms</small>
           </div>
         ) : null}
+
+        <div className="section-divider">Search Providers</div>
+        <div className="model-list">
+          {settings.searchProviders.map((provider) => (
+            <button
+              className={provider.id === searchProviderDraft.id ? "model-pill active" : "model-pill"}
+              key={provider.id}
+              onClick={() => {
+                setSearchProviderDraft(searchProviderToDraft(provider));
+                setModelTest(null);
+              }}
+              type="button"
+            >
+              <span>{provider.name}</span>
+              <small>{provider.kind}</small>
+            </button>
+          ))}
+          <button
+            className="model-pill"
+            onClick={() => {
+              setSearchProviderDraft(blankSearchProviderDraft());
+              setModelTest(null);
+            }}
+            type="button"
+          >
+            <Plus size={14} />
+            <span>New search</span>
+          </button>
+        </div>
+        <label className="field-label">
+          <span>Search Name</span>
+          <input
+            onChange={(event) => setSearchProviderDraft((draft) => ({ ...draft, name: event.target.value }))}
+            value={searchProviderDraft.name}
+          />
+        </label>
+        <label className="field-label">
+          <span>Search Kind</span>
+          <select
+            onChange={(event) =>
+              setSearchProviderDraft((draft) => ({
+                ...draft,
+                kind: event.target.value as SearchProviderDraft["kind"]
+              }))
+            }
+            value={searchProviderDraft.kind}
+          >
+            <option value="brave">Brave</option>
+            <option value="tavily">Tavily</option>
+            <option value="serpapi">SerpAPI</option>
+            <option value="generic">Generic</option>
+          </select>
+        </label>
+        <label className="field-label">
+          <span>Search Base URL</span>
+          <input
+            onChange={(event) => setSearchProviderDraft((draft) => ({ ...draft, baseUrl: event.target.value }))}
+            placeholder="https://api.search.example/search"
+            value={searchProviderDraft.baseUrl}
+          />
+        </label>
+        <label className="field-label">
+          <span>Search API Key</span>
+          <input
+            onChange={(event) => setSearchProviderDraft((draft) => ({ ...draft, apiKey: event.target.value }))}
+            type="password"
+            value={searchProviderDraft.apiKey}
+          />
+        </label>
+        <label className="toggle-label">
+          <input
+            checked={searchProviderDraft.enabled}
+            onChange={(event) => setSearchProviderDraft((draft) => ({ ...draft, enabled: event.target.checked }))}
+            type="checkbox"
+          />
+          <span>Enabled</span>
+        </label>
+        <div className="button-row">
+          <button onClick={saveSearchProvider} type="button">
+            <Save size={15} />
+            <span>Save Search</span>
+          </button>
+          {settings.searchProviders.some((provider) => provider.id === searchProviderDraft.id) ? (
+            <button onClick={() => void deleteSearchProvider(searchProviderDraft.id)} type="button">
+              <Trash2 size={14} />
+            </button>
+          ) : null}
+        </div>
       </div>
     );
   }
@@ -1127,6 +1430,8 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
           <span>Chats {sessions.length}</span>
           <span>Recall {recallItems.length}</span>
           <span>Deep Dive {deepHistory.length}</span>
+          <span>Tasks {tasks.length}</span>
+          <span>Extensions {extensions.length}</span>
         </div>
       </div>
     );

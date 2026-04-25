@@ -15,11 +15,18 @@ import type {
   DebuggerScrollRequest,
   DebuggerTypeRequest,
   DocumentExtraction,
+  ExtensionInstallRequest,
+  ExtensionRecord,
   ImportSummary,
   ModelSettingsState,
   ModelTestRequest,
   ModelTestResult,
-  PageBrief
+  OverthinkTask,
+  PageBrief,
+  RecallItem,
+  RecallSearchRequest,
+  ResearchEvent,
+  ResearchRequest
 } from "./overthink";
 
 export interface OverthinkBridge {
@@ -74,6 +81,26 @@ export interface OverthinkBridge {
     start: (request: AgentTaskRequest) => Promise<string>;
     stop: (taskId: string) => Promise<void>;
     onEvent: (callback: (event: AgentStepEvent) => void) => () => void;
+  };
+  tasks: {
+    list: () => Promise<OverthinkTask[]>;
+    get: (taskId: string) => Promise<OverthinkTask | null>;
+    approve: (taskId: string, approvalId: string) => Promise<OverthinkTask | null>;
+    reject: (taskId: string, approvalId: string) => Promise<OverthinkTask | null>;
+  };
+  research: {
+    start: (request: ResearchRequest) => Promise<string>;
+    stop: (researchId: string) => Promise<void>;
+    onEvent: (callback: (event: ResearchEvent) => void) => () => void;
+  };
+  recall: {
+    search: (request: RecallSearchRequest) => Promise<RecallItem[]>;
+  };
+  extensions: {
+    install: (request?: ExtensionInstallRequest) => Promise<ExtensionRecord | null>;
+    list: () => Promise<ExtensionRecord[]>;
+    setEnabled: (extensionId: string, enabled: boolean) => Promise<ExtensionRecord[]>;
+    remove: (extensionId: string) => Promise<ExtensionRecord[]>;
   };
   data: {
     exportAll: () => Promise<ImportSummary>;

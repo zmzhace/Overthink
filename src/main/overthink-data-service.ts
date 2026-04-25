@@ -5,9 +5,13 @@ import { readFile, writeFile } from "node:fs/promises";
 import type {
   ImportExportPayload,
   ImportSummary,
+  DeepDiveRecord,
+  ExtensionRecord,
   ModelProviderConfig,
   ModelSettingsState,
+  OverthinkTask,
   RecallItem,
+  SearchProviderConfig,
   ThinkChatSession,
   ThinkMessage
 } from "@/shared/overthink";
@@ -17,6 +21,9 @@ import type { OverthinkStorage } from "./overthink-storage";
 const SETTINGS_KEY = "modelSettings";
 const CHAT_KEY = "thinkChatSessions";
 const RECALL_KEY = "recallItems";
+const DEEP_DIVE_KEY = "deepDiveHistory";
+const TASKS_KEY = "overthinkTasks";
+const EXTENSIONS_KEY = "extensions";
 
 export class OverthinkDataService {
   constructor(
@@ -27,11 +34,15 @@ export class OverthinkDataService {
   async exportAll(): Promise<ImportSummary> {
     const local = this.storage.get("local");
     const payload: ImportExportPayload = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       exportedAt: new Date().toISOString(),
       modelSettings: this.coerceSettings(local[SETTINGS_KEY]),
       thinkChatSessions: this.coerceSessions(local[CHAT_KEY]),
-      recallItems: this.coerceRecall(local[RECALL_KEY])
+      recallItems: this.coerceRecall(local[RECALL_KEY]),
+      deepDiveHistory: this.coerceDeepDive(local[DEEP_DIVE_KEY]),
+      tasks: this.coerceTasks(local[TASKS_KEY]),
+      extensions: this.coerceExtensions(local[EXTENSIONS_KEY]),
+      syncState: "local"
     };
 
     const result = await dialog.showSaveDialog(this.mainWindow, {
@@ -61,6 +72,9 @@ export class OverthinkDataService {
         modelProviders: 0,
         chatSessions: 0,
         recallItems: 0,
+        deepDives: 0,
+        tasks: 0,
+        extensions: 0,
         message: "Import canceled."
       };
     }
@@ -71,13 +85,20 @@ export class OverthinkDataService {
       exportedAt: new Date().toISOString(),
       modelSettings: this.coerceSettings(raw.modelSettings ?? raw.settings ?? raw.models),
       thinkChatSessions: this.coerceSessions(raw.thinkChatSessions ?? raw.chatSessions ?? raw.conversations ?? raw.history),
-      recallItems: this.coerceRecall(raw.recallItems ?? raw.memories ?? raw.memory)
+      recallItems: this.coerceRecall(raw.recallItems ?? raw.memories ?? raw.memory),
+      deepDiveHistory: this.coerceDeepDive(raw.deepDiveHistory ?? raw.researchHistory ?? raw.deepDives),
+      tasks: this.coerceTasks(raw.tasks ?? raw.overthinkTasks),
+      extensions: this.coerceExtensions(raw.extensions),
+      syncState: "local"
     };
 
     this.storage.set("local", {
       [SETTINGS_KEY]: payload.modelSettings,
       [CHAT_KEY]: payload.thinkChatSessions,
-      [RECALL_KEY]: payload.recallItems
+      [RECALL_KEY]: payload.recallItems,
+      [DEEP_DIVE_KEY]: payload.deepDiveHistory ?? [],
+      [TASKS_KEY]: payload.tasks ?? [],
+      [EXTENSIONS_KEY]: payload.extensions ?? []
     });
 
     return this.summary(true, payload, "Import complete.");
@@ -87,7 +108,9 @@ export class OverthinkDataService {
     const empty: ModelSettingsState = {
       providers: [],
       activeProviderId: null,
-      activeVisionProviderId: null
+      activeVisionProviderId: null,
+      searchProviders: [],
+      activeSearchProviderId: null
     };
 
     if (!value || typeof value !== "object") {
@@ -98,6 +121,10 @@ export class OverthinkDataService {
     const rawProviders = Array.isArray(record.providers) ? record.providers : Array.isArray(value) ? value : [];
     const providers = rawProviders.flatMap((item) => this.coerceProvider(item));
     const providerIds = new Set(providers.map((provider) => provider.id));
+    const searchProviders = Array.isArray(record.searchProviders)
+      ? record.searchProviders.flatMap((item) => this.coerceSearchProvider(item))
+      : [];
+    const searchProviderIds = new Set(searchProviders.map((provider) => provider.id));
     const activeProviderId =
       typeof record.activeProviderId === "string" && providerIds.has(record.activeProviderId)
         ? record.activeProviderId
@@ -109,7 +136,12 @@ export class OverthinkDataService {
       activeVisionProviderId:
         typeof record.activeVisionProviderId === "string" && providerIds.has(record.activeVisionProviderId)
           ? record.activeVisionProviderId
-          : activeProviderId
+          : activeProviderId,
+      searchProviders,
+      activeSearchProviderId:
+        typeof record.activeSearchProviderId === "string" && searchProviderIds.has(record.activeSearchProviderId)
+          ? record.activeSearchProviderId
+          : searchProviders[0]?.id ?? null
     };
   }
 
@@ -143,6 +175,33 @@ export class OverthinkDataService {
     ];
   }
 
+  private coerceSearchProvider(value: unknown): SearchProviderConfig[] {
+    if (!value || typeof value !== "object") {
+      return [];
+    }
+
+    const record = value as Record<string, unknown>;
+    const now = new Date().toISOString();
+    const baseUrl = this.stringValue(record.baseUrl ?? record.endpoint ?? record.url);
+    if (!baseUrl) {
+      return [];
+    }
+
+    const kind = this.stringValue(record.kind);
+    return [
+      {
+        id: this.stringValue(record.id) || randomUUID(),
+        name: this.stringValue(record.name) || "Imported search",
+        kind: kind === "brave" || kind === "tavily" || kind === "serpapi" ? kind : "generic",
+        baseUrl,
+        apiKey: this.stringValue(record.apiKey ?? record.key),
+        enabled: typeof record.enabled === "boolean" ? record.enabled : true,
+        createdAt: this.stringValue(record.createdAt) || now,
+        updatedAt: now
+      }
+    ];
+  }
+
   private coerceSessions(value: unknown): ThinkChatSession[] {
     if (!Array.isArray(value)) {
       return [];
@@ -166,6 +225,111 @@ export class OverthinkDataService {
           messages,
           pageUrl: this.stringValue(record.pageUrl ?? record.url) || undefined,
           updatedAt: this.stringValue(record.updatedAt) || new Date().toISOString()
+        }
+      ];
+    });
+  }
+
+  private coerceDeepDive(value: unknown): DeepDiveRecord[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.flatMap((item) => {
+      if (!item || typeof item !== "object") {
+        return [];
+      }
+
+      const record = item as Record<string, unknown>;
+      const query = this.stringValue(record.query);
+      const result = this.stringValue(record.result);
+      if (!query && !result) {
+        return [];
+      }
+
+      return [
+        {
+          id: this.stringValue(record.id) || randomUUID(),
+          query,
+          result,
+          sources: [],
+          citations: [],
+          createdAt: this.stringValue(record.createdAt) || new Date().toISOString()
+        }
+      ];
+    });
+  }
+
+  private coerceTasks(value: unknown): OverthinkTask[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.flatMap((item) => {
+      if (!item || typeof item !== "object") {
+        return [];
+      }
+
+      const record = item as Record<string, unknown>;
+      const objective = this.stringValue(record.objective);
+      if (!objective) {
+        return [];
+      }
+
+      const now = new Date().toISOString();
+      return [
+        {
+          id: this.stringValue(record.id) || randomUUID(),
+          objective,
+          status: "paused",
+          tabId: typeof record.tabId === "number" ? record.tabId : undefined,
+          steps: [],
+          approvals: [],
+          toolResults: [],
+          finalAnswer: this.stringValue(record.finalAnswer) || undefined,
+          error: this.stringValue(record.error) || undefined,
+          syncState: "local",
+          createdAt: this.stringValue(record.createdAt) || now,
+          updatedAt: now
+        }
+      ];
+    });
+  }
+
+  private coerceExtensions(value: unknown): ExtensionRecord[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.flatMap((item) => {
+      if (!item || typeof item !== "object") {
+        return [];
+      }
+
+      const record = item as Record<string, unknown>;
+      const extensionPath = this.stringValue(record.path);
+      if (!extensionPath) {
+        return [];
+      }
+
+      const now = new Date().toISOString();
+      return [
+        {
+          id: this.stringValue(record.id) || randomUUID(),
+          name: this.stringValue(record.name) || "Imported extension",
+          version: this.stringValue(record.version) || "0.0.0",
+          path: extensionPath,
+          enabled: typeof record.enabled === "boolean" ? record.enabled : false,
+          permissions: Array.isArray(record.permissions)
+            ? record.permissions.flatMap((permission) => (typeof permission === "string" ? [permission] : []))
+            : [],
+          warnings: Array.isArray(record.warnings)
+            ? record.warnings.flatMap((warning) => (typeof warning === "string" ? [warning] : []))
+            : [],
+          loadedAt: this.stringValue(record.loadedAt) || undefined,
+          createdAt: this.stringValue(record.createdAt) || now,
+          updatedAt: now,
+          syncState: "local"
         }
       ];
     });
@@ -234,6 +398,9 @@ export class OverthinkDataService {
       modelProviders: payload.modelSettings.providers.length,
       chatSessions: payload.thinkChatSessions.length,
       recallItems: payload.recallItems.length,
+      deepDives: payload.deepDiveHistory?.length ?? 0,
+      tasks: payload.tasks?.length ?? 0,
+      extensions: payload.extensions?.length ?? 0,
       message
     };
   }

@@ -35,6 +35,18 @@ export const IPC_CHANNELS = {
   agentStart: "overthink:agent:start",
   agentStop: "overthink:agent:stop",
   agentEvent: "overthink:agent:event",
+  tasksList: "overthink:tasks:list",
+  tasksGet: "overthink:tasks:get",
+  tasksApprove: "overthink:tasks:approve",
+  tasksReject: "overthink:tasks:reject",
+  researchStart: "overthink:research:start",
+  researchStop: "overthink:research:stop",
+  researchEvent: "overthink:research:event",
+  recallSearch: "overthink:recall:search",
+  extensionsInstall: "overthink:extensions:install",
+  extensionsList: "overthink:extensions:list",
+  extensionsSetEnabled: "overthink:extensions:set-enabled",
+  extensionsRemove: "overthink:extensions:remove",
   dataExport: "overthink:data:export",
   dataImport: "overthink:data:import"
 } as const;

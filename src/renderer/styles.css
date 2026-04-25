@@ -552,6 +552,7 @@ button {
 
 .chat-history-row select,
 .field-label input,
+.field-label select,
 .button-row input,
 .tool-grid input,
 .large-input,
@@ -567,6 +568,7 @@ button {
 
 .chat-history-row select,
 .field-label input,
+.field-label select,
 .button-row input,
 .tool-grid input {
   height: 32px;
@@ -585,6 +587,7 @@ button {
 
 .chat-history-row select:focus,
 .field-label input:focus,
+.field-label select:focus,
 .button-row input:focus,
 .tool-grid input:focus,
 .large-input:focus,
@@ -762,6 +765,77 @@ button {
   display: grid;
   align-content: start;
   gap: 8px;
+}
+
+.card-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.task-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.task-card strong {
+  color: #111827;
+  font-size: 12px;
+}
+
+.task-card small {
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.task-card p {
+  margin: 0;
+  color: #293546;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.approval-actions button,
+.section-divider {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #273241;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.approval-actions button {
+  cursor: pointer;
+}
+
+.approval-actions button:hover {
+  border-color: #b7c2cf;
+  background: #f5f7fa;
+}
+
+.section-divider {
+  justify-content: start;
+  border-style: dashed;
+  color: #536172;
 }
 
 .recall-item {

@@ -46,15 +46,35 @@ export interface ModelProviderConfig {
   updatedAt: string;
 }
 
+export type SearchProviderKind = "brave" | "tavily" | "serpapi" | "generic";
+
+export interface SearchProviderConfig {
+  id: string;
+  name: string;
+  kind: SearchProviderKind;
+  baseUrl: string;
+  apiKey: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ModelSettingsState {
   providers: ModelProviderConfig[];
   activeProviderId: string | null;
   activeVisionProviderId: string | null;
+  searchProviders: SearchProviderConfig[];
+  activeSearchProviderId: string | null;
 }
 
 export type ModelProviderDraft = Pick<
   ModelProviderConfig,
   "id" | "name" | "kind" | "baseUrl" | "apiKey" | "chatModel" | "visionModel" | "enabled"
+>;
+
+export type SearchProviderDraft = Pick<
+  SearchProviderConfig,
+  "id" | "name" | "kind" | "baseUrl" | "apiKey" | "enabled"
 >;
 
 export interface ModelTestRequest {
@@ -117,6 +137,83 @@ export interface DocumentExtraction {
   extractedAt: string;
 }
 
+export type ToolCallName =
+  | "read_page"
+  | "capture_screenshot"
+  | "search_web"
+  | "open_url"
+  | "extract_links"
+  | "click"
+  | "type"
+  | "scroll"
+  | "press_key"
+  | "wait_for_page"
+  | "attach_document"
+  | "recall_search";
+
+export type ToolRiskLevel = "low" | "medium" | "high";
+
+export interface ToolCallRequest {
+  id: string;
+  name: ToolCallName;
+  args: Record<string, unknown>;
+  risk: ToolRiskLevel;
+  reason: string;
+}
+
+export interface ToolCallResult {
+  id: string;
+  callId: string;
+  name: ToolCallName;
+  ok: boolean;
+  summary: string;
+  data?: unknown;
+  error?: string;
+  createdAt: string;
+}
+
+export type ApprovalStatus = "pending" | "approved" | "rejected" | "auto_approved";
+
+export interface ApprovalRequest {
+  id: string;
+  taskId: string;
+  title: string;
+  detail: string;
+  risk: ToolRiskLevel;
+  actions: ToolCallRequest[];
+  status: ApprovalStatus;
+  createdAt: string;
+  decidedAt?: string;
+  autoReason?: string;
+}
+
+export type TaskStatus = "queued" | "running" | "awaiting_approval" | "paused" | "completed" | "error" | "stopped";
+
+export interface OverthinkTaskStep {
+  id: string;
+  type: "thought" | "tool" | "approval" | "result" | "error";
+  title: string;
+  detail: string;
+  createdAt: string;
+}
+
+export interface OverthinkTask {
+  id: string;
+  objective: string;
+  status: TaskStatus;
+  tabId?: number;
+  pageUrl?: string;
+  pageTitle?: string;
+  steps: OverthinkTaskStep[];
+  approvals: ApprovalRequest[];
+  toolResults: ToolCallResult[];
+  finalAnswer?: string;
+  error?: string;
+  syncState: "local" | "pending" | "synced";
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DebuggerClickRequest {
   tabId?: number;
   x: number;
@@ -148,10 +245,12 @@ export interface AgentTaskRequest {
 
 export interface AgentStepEvent {
   taskId: string;
-  type: "start" | "step" | "complete" | "error" | "stopped";
+  type: "start" | "step" | "approval" | "complete" | "error" | "stopped";
   title: string;
   detail?: string;
   tab?: BrowserTabState | null;
+  task?: OverthinkTask;
+  approval?: ApprovalRequest;
 }
 
 export interface RecallItem {
@@ -163,12 +262,83 @@ export interface RecallItem {
   createdAt: string;
 }
 
+export interface ResearchSource {
+  id: string;
+  title: string;
+  url: string;
+  excerpt: string;
+  capturedAt: string;
+  provider: "search-api" | "browser" | "page" | "manual";
+}
+
+export interface Citation {
+  id: string;
+  claim: string;
+  sourceId: string;
+  sourceUrl: string;
+  title: string;
+  excerpt: string;
+  capturedAt: string;
+}
+
+export interface DeepDiveRecord {
+  id: string;
+  query: string;
+  result: string;
+  sources: ResearchSource[];
+  citations: Citation[];
+  createdAt: string;
+}
+
+export interface ResearchRequest {
+  query: string;
+  tabId?: number;
+  pageBrief?: PageBrief | null;
+  documents?: DocumentExtraction[];
+}
+
+export interface ResearchEvent {
+  researchId: string;
+  type: "start" | "source" | "delta" | "complete" | "error" | "stopped";
+  delta?: string;
+  message?: string;
+  source?: ResearchSource;
+  record?: DeepDiveRecord;
+}
+
+export interface RecallSearchRequest {
+  query: string;
+  limit?: number;
+}
+
+export interface ExtensionRecord {
+  id: string;
+  name: string;
+  version: string;
+  path: string;
+  enabled: boolean;
+  permissions: string[];
+  warnings: string[];
+  loadedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  syncState: "local" | "pending" | "synced";
+}
+
+export interface ExtensionInstallRequest {
+  path?: string;
+}
+
 export interface ImportExportPayload {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   exportedAt: string;
   modelSettings: ModelSettingsState;
   thinkChatSessions: ThinkChatSession[];
   recallItems: RecallItem[];
+  deepDiveHistory?: DeepDiveRecord[];
+  tasks?: OverthinkTask[];
+  extensions?: ExtensionRecord[];
+  syncState?: "local" | "pending" | "synced";
 }
 
 export interface ImportSummary {
@@ -176,5 +346,8 @@ export interface ImportSummary {
   modelProviders: number;
   chatSessions: number;
   recallItems: number;
+  deepDives: number;
+  tasks: number;
+  extensions: number;
   message: string;
 }

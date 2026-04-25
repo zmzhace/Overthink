@@ -9,17 +9,22 @@ import type {
   ModelProviderDraft,
   ModelSettingsState,
   ModelTestRequest,
-  ModelTestResult
+  ModelTestResult,
+  RecallItem,
+  SearchProviderConfig
 } from "@/shared/overthink";
 
 import type { OverthinkStorage } from "./overthink-storage";
 
 const SETTINGS_KEY = "modelSettings";
+const RECALL_KEY = "recallItems";
 
 const emptySettings = (): ModelSettingsState => ({
   providers: [],
   activeProviderId: null,
-  activeVisionProviderId: null
+  activeVisionProviderId: null,
+  searchProviders: [],
+  activeSearchProviderId: null
 });
 
 interface OpenAiMessage {
@@ -47,23 +52,35 @@ export class OverthinkModelService {
     return {
       providers: stored.providers.map((provider) => this.normalizeProvider(provider)),
       activeProviderId: stored.activeProviderId ?? null,
-      activeVisionProviderId: stored.activeVisionProviderId ?? null
+      activeVisionProviderId: stored.activeVisionProviderId ?? null,
+      searchProviders: Array.isArray(stored.searchProviders)
+        ? stored.searchProviders.map((provider) => this.normalizeSearchProvider(provider))
+        : [],
+      activeSearchProviderId: stored.activeSearchProviderId ?? null
     };
   }
 
   saveSettings(settings: ModelSettingsState): ModelSettingsState {
     const providers = settings.providers.map((provider) => this.normalizeProvider(provider));
     const providerIds = new Set(providers.map((provider) => provider.id));
+    const searchProviders = (settings.searchProviders ?? []).map((provider) => this.normalizeSearchProvider(provider));
+    const searchProviderIds = new Set(searchProviders.map((provider) => provider.id));
     const activeProviderId =
       settings.activeProviderId && providerIds.has(settings.activeProviderId) ? settings.activeProviderId : providers[0]?.id ?? null;
     const activeVisionProviderId =
       settings.activeVisionProviderId && providerIds.has(settings.activeVisionProviderId)
         ? settings.activeVisionProviderId
         : activeProviderId;
+    const activeSearchProviderId =
+      settings.activeSearchProviderId && searchProviderIds.has(settings.activeSearchProviderId)
+        ? settings.activeSearchProviderId
+        : searchProviders[0]?.id ?? null;
     const nextSettings: ModelSettingsState = {
       providers,
       activeProviderId,
-      activeVisionProviderId
+      activeVisionProviderId,
+      searchProviders,
+      activeSearchProviderId
     };
 
     this.storage.set("local", { [SETTINGS_KEY]: nextSettings });
@@ -162,6 +179,99 @@ export class OverthinkModelService {
 
   stopChat(streamId: string): void {
     this.activeStreams.get(streamId)?.abort();
+  }
+
+  async completeText(request: ChatStreamRequest): Promise<string> {
+    const settings = this.getSettings();
+    const provider = this.resolveProvider(settings, request.providerId ?? settings.activeProviderId);
+
+    if (!provider) {
+      throw new Error("Model Settings are required before Overthink can call a model.");
+    }
+
+    const response = await fetch(this.chatCompletionsUrl(provider.baseUrl), {
+      method: "POST",
+      headers: this.headers(provider),
+      body: JSON.stringify({
+        model: provider.chatModel,
+        messages: this.buildMessages(provider, request),
+        temperature: 0.3,
+        stream: false
+      })
+    });
+
+    const bodyText = await response.text();
+    if (!response.ok) {
+      throw new Error(this.formatHttpError(response.status, bodyText));
+    }
+
+    const content = this.extractMessageFromJson(bodyText);
+    if (!content) {
+      throw new Error("Endpoint responded, but the response was not OpenAI-compatible.");
+    }
+
+    return content;
+  }
+
+  async completeVision(prompt: string, dataUrl: string, providerId?: string | null): Promise<string> {
+    const settings = this.getSettings();
+    const provider = this.resolveProvider(settings, providerId ?? settings.activeVisionProviderId ?? settings.activeProviderId);
+
+    if (!provider?.visionModel) {
+      throw new Error("A vision model is required for OCR.");
+    }
+
+    const response = await fetch(this.chatCompletionsUrl(provider.baseUrl), {
+      method: "POST",
+      headers: this.headers(provider),
+      body: JSON.stringify({
+        model: provider.visionModel,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: dataUrl } }
+            ]
+          }
+        ],
+        temperature: 0,
+        stream: false
+      })
+    });
+
+    const bodyText = await response.text();
+    if (!response.ok) {
+      throw new Error(this.formatHttpError(response.status, bodyText));
+    }
+
+    return this.extractMessageFromJson(bodyText);
+  }
+
+  getActiveSearchProvider(): SearchProviderConfig | null {
+    const settings = this.getSettings();
+    return (
+      settings.searchProviders.find((provider) => provider.id === settings.activeSearchProviderId && provider.enabled) ??
+      settings.searchProviders.find((provider) => provider.enabled) ??
+      null
+    );
+  }
+
+  searchRecall(query: string, limit = 6): RecallItem[] {
+    const storedValues = this.storage.get("local", RECALL_KEY) as { recallItems?: RecallItem[] };
+    const items = Array.isArray(storedValues.recallItems) ? storedValues.recallItems : [];
+    const terms = new Set(query.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+
+    return items
+      .filter((item) => item.enabled && item.text.trim())
+      .map((item) => {
+        const text = item.text.toLowerCase();
+        const score = Array.from(terms).reduce((total, term) => total + (text.includes(term) ? 1 : 0), 0);
+        return { item, score };
+      })
+      .sort((left, right) => right.score - left.score || right.item.createdAt.localeCompare(left.item.createdAt))
+      .slice(0, limit)
+      .map(({ item }) => item);
   }
 
   private async runChatStream(
@@ -307,6 +417,19 @@ export class OverthinkModelService {
       });
     }
 
+    const recallQuery = [
+      request.messages.at(-1)?.content ?? "",
+      context?.pageBrief?.title ?? "",
+      context?.pageBrief?.url ?? ""
+    ].join("\n");
+    const recallItems = this.searchRecall(recallQuery, 6);
+    if (recallItems.length) {
+      messages.push({
+        role: "system",
+        content: recallItems.map((item) => `Recall (${item.source}${item.url ? `, ${item.url}` : ""}): ${item.text}`).join("\n")
+      });
+    }
+
     request.messages.forEach((message, index) => {
       const isLastUser = message.role === "user" && index === request.messages.length - 1;
       const screenshotDataUrl = context?.screenshotDataUrl;
@@ -352,6 +475,21 @@ export class OverthinkModelService {
       apiKey: provider.apiKey,
       chatModel: provider.chatModel.trim(),
       visionModel: provider.visionModel.trim(),
+      enabled: provider.enabled,
+      createdAt: provider.createdAt || now,
+      updatedAt: now
+    };
+  }
+
+  private normalizeSearchProvider(provider: SearchProviderConfig): SearchProviderConfig {
+    const now = new Date().toISOString();
+    const kind = ["brave", "tavily", "serpapi", "generic"].includes(provider.kind) ? provider.kind : "generic";
+    return {
+      id: provider.id || randomUUID(),
+      name: provider.name.trim() || "Search provider",
+      kind,
+      baseUrl: provider.baseUrl.trim(),
+      apiKey: provider.apiKey.trim(),
       enabled: provider.enabled,
       createdAt: provider.createdAt || now,
       updatedAt: now

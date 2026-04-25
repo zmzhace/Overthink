@@ -5,17 +5,29 @@ import path from "node:path";
 
 import type { DocumentExtraction } from "@/shared/overthink";
 
+import type { OverthinkModelService } from "./overthink-model-service";
+
 const TEXT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".csv", ".json", ".log"]);
+const IMAGE_MIME_TYPES = new Map([
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".webp", "image/webp"],
+  [".gif", "image/gif"]
+]);
 
 export class OverthinkDocumentExtractor {
-  constructor(private readonly mainWindow: BrowserWindow) {}
+  constructor(
+    private readonly mainWindow: BrowserWindow,
+    private readonly modelService: OverthinkModelService
+  ) {}
 
   async pickAndExtract(): Promise<DocumentExtraction | null> {
     const result = await dialog.showOpenDialog(this.mainWindow, {
       title: "Select document",
       properties: ["openFile"],
       filters: [
-        { name: "Documents", extensions: ["txt", "md", "markdown", "csv", "json", "log", "pdf"] },
+        { name: "Documents", extensions: ["txt", "md", "markdown", "csv", "json", "log", "pdf", "png", "jpg", "jpeg", "webp", "gif"] },
         { name: "All Files", extensions: ["*"] }
       ]
     });
@@ -36,11 +48,27 @@ export class OverthinkDocumentExtractor {
 
     if (TEXT_EXTENSIONS.has(extension)) {
       text = buffer.toString("utf8").replace(/^\uFEFF/, "");
+    } else if (IMAGE_MIME_TYPES.has(extension)) {
+      kind = "ocr";
+      try {
+        text = await this.extractImageText(buffer, IMAGE_MIME_TYPES.get(extension) ?? "image/png");
+      } catch (error) {
+        warnings.push(error instanceof Error ? error.message : "Vision OCR failed.");
+      }
     } else if (extension === ".pdf") {
       kind = "pdf";
       text = this.extractPdfText(buffer);
       if (!text) {
-        warnings.push("No embedded PDF text was found. Configure an OCR endpoint for scanned documents.");
+        kind = "ocr";
+        try {
+          text = await this.extractPdfWithVision(buffer);
+        } catch (error) {
+          warnings.push(
+            error instanceof Error
+              ? `No embedded PDF text was found. Vision OCR failed: ${error.message}`
+              : "No embedded PDF text was found. Vision OCR failed."
+          );
+        }
       }
     } else {
       kind = "ocr";
@@ -75,6 +103,20 @@ export class OverthinkDocumentExtractor {
     }
 
     return pieces.join(" ");
+  }
+
+  private async extractImageText(buffer: Buffer, mimeType: string): Promise<string> {
+    return this.modelService.completeVision(
+      "Extract all readable text from this image. Return only the extracted text, preserving useful line breaks.",
+      `data:${mimeType};base64,${buffer.toString("base64")}`
+    );
+  }
+
+  private async extractPdfWithVision(buffer: Buffer): Promise<string> {
+    return this.modelService.completeVision(
+      "This file may be a scanned PDF. Extract all readable text if your provider supports PDF or document inputs. Return only extracted text.",
+      `data:application/pdf;base64,${buffer.toString("base64")}`
+    );
   }
 
   private decodePdfLiteral(value: string): string {

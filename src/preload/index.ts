@@ -3,7 +3,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { OverthinkBridge } from "@/shared/bridge";
 import { IPC_CHANNELS } from "@/shared/ipc";
 import type { TabsSnapshot } from "@/shared/ipc";
-import type { AgentStepEvent, ChatStreamEvent } from "@/shared/overthink";
+import type { AgentStepEvent, ChatStreamEvent, ResearchEvent } from "@/shared/overthink";
 
 const bridge: OverthinkBridge = {
   tabs: {
@@ -69,6 +69,30 @@ const bridge: OverthinkBridge = {
       ipcRenderer.on(IPC_CHANNELS.agentEvent, listener);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.agentEvent, listener);
     }
+  },
+  tasks: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.tasksList),
+    get: (taskId) => ipcRenderer.invoke(IPC_CHANNELS.tasksGet, taskId),
+    approve: (taskId, approvalId) => ipcRenderer.invoke(IPC_CHANNELS.tasksApprove, taskId, approvalId),
+    reject: (taskId, approvalId) => ipcRenderer.invoke(IPC_CHANNELS.tasksReject, taskId, approvalId)
+  },
+  research: {
+    start: (request) => ipcRenderer.invoke(IPC_CHANNELS.researchStart, request),
+    stop: (researchId) => ipcRenderer.invoke(IPC_CHANNELS.researchStop, researchId),
+    onEvent: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, researchEvent: ResearchEvent) => callback(researchEvent);
+      ipcRenderer.on(IPC_CHANNELS.researchEvent, listener);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.researchEvent, listener);
+    }
+  },
+  recall: {
+    search: (request) => ipcRenderer.invoke(IPC_CHANNELS.recallSearch, request)
+  },
+  extensions: {
+    install: (request) => ipcRenderer.invoke(IPC_CHANNELS.extensionsInstall, request),
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.extensionsList),
+    setEnabled: (extensionId, enabled) => ipcRenderer.invoke(IPC_CHANNELS.extensionsSetEnabled, extensionId, enabled),
+    remove: (extensionId) => ipcRenderer.invoke(IPC_CHANNELS.extensionsRemove, extensionId)
   },
   data: {
     exportAll: () => ipcRenderer.invoke(IPC_CHANNELS.dataExport),

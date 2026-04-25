@@ -5,7 +5,9 @@ import { IPC_CHANNELS } from "@/shared/ipc";
 import { OverthinkAgentRuntime } from "./overthink-agent-runtime";
 import { OverthinkDataService } from "./overthink-data-service";
 import { OverthinkDocumentExtractor } from "./overthink-document-extractor";
+import { OverthinkExtensionService } from "./overthink-extension-service";
 import { OverthinkModelService } from "./overthink-model-service";
+import { OverthinkResearchRuntime } from "./overthink-research-runtime";
 import type { OverthinkStorage } from "./overthink-storage";
 import type { OverthinkTabs } from "./overthink-tabs";
 
@@ -17,9 +19,13 @@ interface RegisterIpcHandlersOptions {
 
 export function registerIpcHandlers({ mainWindow, tabs, storage }: RegisterIpcHandlersOptions): void {
   const modelService = new OverthinkModelService(storage);
-  const documentExtractor = new OverthinkDocumentExtractor(mainWindow);
+  const documentExtractor = new OverthinkDocumentExtractor(mainWindow, modelService);
   const dataService = new OverthinkDataService(mainWindow, storage);
-  const agentRuntime = new OverthinkAgentRuntime(tabs);
+  const agentRuntime = new OverthinkAgentRuntime(tabs, storage, modelService);
+  const researchRuntime = new OverthinkResearchRuntime(tabs, storage, modelService);
+  const extensionService = new OverthinkExtensionService(mainWindow, storage);
+
+  void extensionService.loadEnabledExtensions();
 
   ipcMain.handle(IPC_CHANNELS.tabsGetState, () => tabs.getSnapshot());
   ipcMain.handle(IPC_CHANNELS.tabsCreate, (_event, url?: string) => tabs.createTab(url));
@@ -65,6 +71,25 @@ export function registerIpcHandlers({ mainWindow, tabs, storage }: RegisterIpcHa
   ipcMain.handle(IPC_CHANNELS.documentExtract, () => documentExtractor.pickAndExtract());
   ipcMain.handle(IPC_CHANNELS.agentStart, (event, request) => agentRuntime.start(event.sender, request));
   ipcMain.handle(IPC_CHANNELS.agentStop, (_event, taskId: string) => agentRuntime.stop(taskId));
+  ipcMain.handle(IPC_CHANNELS.tasksList, () => agentRuntime.list());
+  ipcMain.handle(IPC_CHANNELS.tasksGet, (_event, taskId: string) => agentRuntime.get(taskId));
+  ipcMain.handle(IPC_CHANNELS.tasksApprove, (_event, taskId: string, approvalId: string) =>
+    agentRuntime.approve(taskId, approvalId)
+  );
+  ipcMain.handle(IPC_CHANNELS.tasksReject, (_event, taskId: string, approvalId: string) =>
+    agentRuntime.reject(taskId, approvalId)
+  );
+  ipcMain.handle(IPC_CHANNELS.researchStart, (event, request) => researchRuntime.start(event.sender, request));
+  ipcMain.handle(IPC_CHANNELS.researchStop, (_event, researchId: string) => researchRuntime.stop(researchId));
+  ipcMain.handle(IPC_CHANNELS.recallSearch, (_event, request) =>
+    modelService.searchRecall(request.query, request.limit)
+  );
+  ipcMain.handle(IPC_CHANNELS.extensionsInstall, (_event, request) => extensionService.install(request));
+  ipcMain.handle(IPC_CHANNELS.extensionsList, () => extensionService.list());
+  ipcMain.handle(IPC_CHANNELS.extensionsSetEnabled, (_event, extensionId: string, enabled: boolean) =>
+    extensionService.setEnabled(extensionId, enabled)
+  );
+  ipcMain.handle(IPC_CHANNELS.extensionsRemove, (_event, extensionId: string) => extensionService.remove(extensionId));
   ipcMain.handle(IPC_CHANNELS.dataExport, () => dataService.exportAll());
   ipcMain.handle(IPC_CHANNELS.dataImport, () => dataService.importAll());
 }
