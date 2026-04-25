@@ -2,6 +2,7 @@ import { BrowserWindow, WebContentsView } from "electron";
 
 import { IPC_CHANNELS, type BrowserBounds, type BrowserTabState, type TabsSnapshot } from "@/shared/ipc";
 import type { PageBrief } from "@/shared/overthink";
+import { OVERTHINK_SCHEME } from "@/shared/branding";
 
 import { OverthinkDebugger } from "./overthink-debugger";
 import { OverthinkPageRuntime } from "./overthink-page-runtime";
@@ -251,8 +252,17 @@ export class OverthinkTabs {
     const webContents = tab.view.webContents;
 
     webContents.setWindowOpenHandler(({ url }) => {
+      if (this.sendHomeAgentPrompt(tab, url)) {
+        return { action: "deny" };
+      }
       void this.createTab(url);
       return { action: "deny" };
+    });
+
+    webContents.on("will-navigate", (event, url) => {
+      if (this.sendHomeAgentPrompt(tab, url)) {
+        event.preventDefault();
+      }
     });
 
     const updateNavigationState = () => {
@@ -316,6 +326,30 @@ export class OverthinkTabs {
     }
 
     return this.broadcast();
+  }
+
+  private sendHomeAgentPrompt(tab: BrowserTab, url: string): boolean {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== `${OVERTHINK_SCHEME}:` || parsed.hostname !== "agent") {
+        return false;
+      }
+
+      const prompt = parsed.searchParams.get("prompt")?.trim();
+      if (!prompt) {
+        return true;
+      }
+
+      if (!this.mainWindow.webContents.isDestroyed()) {
+        this.mainWindow.webContents.send(IPC_CHANNELS.homeAgentPrompt, {
+          tabId: tab.id,
+          prompt
+        });
+      }
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private isNavigationAbort(error: unknown): boolean {

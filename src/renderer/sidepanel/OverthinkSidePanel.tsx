@@ -1,23 +1,22 @@
 import {
   AlertTriangle,
-  BookOpenText,
-  Camera,
+  Bot,
   CheckCircle2,
-  ClipboardList,
   Database,
   Download,
-  FileText,
-  History,
-  MessageSquareText,
-  Play,
+  FilePlus2,
+  Globe2,
+  Loader2,
+  PackagePlus,
   Plus,
-  RotateCcw,
+  RefreshCw,
   Save,
   Search,
   SendHorizontal,
   Settings,
-  Puzzle,
+  Sparkles,
   Square,
+  Store,
   Trash2,
   Upload
 } from "lucide-react";
@@ -27,44 +26,34 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { BrowserTabState } from "@/shared/ipc";
 import type {
   AgentStepEvent,
-  DeepDiveRecord,
   DocumentExtraction,
-  ExtensionRecord,
   ImportSummary,
   ModelProviderConfig,
   ModelProviderDraft,
   ModelSettingsState,
   ModelTestResult,
-  OverthinkTask,
   PageBrief,
   RecallItem,
   SearchProviderConfig,
   SearchProviderDraft,
+  SkillMarketplaceEntry,
+  SkillMarketplaceSource,
+  SkillMarketplaceState,
+  SkillRecord,
   ThinkChatSession,
   ThinkMessage
 } from "@/shared/overthink";
 
 interface OverthinkSidePanelProps {
   activeTab: BrowserTabState | null;
+  agentPrompt?: { id: string; prompt: string; tabId: number } | null;
 }
 
-type PanelTab = "chat" | "agent" | "dive" | "recall" | "tasks" | "extensions" | "models" | "data";
-type BusyState = "idle" | "brief" | "shot" | "doc" | "chat" | "dive" | "model";
+type PanelView = "agent" | "skills" | "settings";
+type BusyState = "idle" | "chat" | "agent" | "brief" | "doc" | "model" | "skills" | "data";
 
 const CHAT_KEY = "thinkChatSessions";
 const RECALL_KEY = "recallItems";
-const DEEP_DIVE_KEY = "deepDiveHistory";
-
-const PANEL_TABS: Array<{ id: PanelTab; icon: LucideIcon; label: string }> = [
-  { id: "chat", icon: MessageSquareText, label: "Think Chat" },
-  { id: "agent", icon: Play, label: "Agent" },
-  { id: "dive", icon: Search, label: "Deep Dive" },
-  { id: "recall", icon: Database, label: "Recall" },
-  { id: "tasks", icon: ClipboardList, label: "Tasks" },
-  { id: "extensions", icon: Puzzle, label: "Extensions" },
-  { id: "models", icon: Settings, label: "Models" },
-  { id: "data", icon: Upload, label: "Data" }
-];
 
 const emptySettings = (): ModelSettingsState => ({
   providers: [],
@@ -74,12 +63,30 @@ const emptySettings = (): ModelSettingsState => ({
   activeSearchProviderId: null
 });
 
+const emptyMarketplace: SkillMarketplaceState = {
+  sources: [],
+  entries: []
+};
+
+const NAV_ITEMS: Array<{ id: PanelView; icon: LucideIcon; label: string }> = [
+  { id: "agent", icon: Bot, label: "Agent" },
+  { id: "skills", icon: Store, label: "Skills" },
+  { id: "settings", icon: Settings, label: "Settings" }
+];
+
 function makeId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function truncate(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength - 1)}...`;
 }
 
 function compactUrl(url: string): string {
@@ -91,12 +98,13 @@ function compactUrl(url: string): string {
   }
 }
 
-function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-
-  return `${value.slice(0, maxLength - 1)}...`;
+function createMessage(role: ThinkMessage["role"], content: string): ThinkMessage {
+  return {
+    id: makeId(),
+    role,
+    content,
+    createdAt: nowIso()
+  };
 }
 
 function blankProviderDraft(): ModelProviderDraft {
@@ -185,21 +193,22 @@ function draftToSearchProvider(draft: SearchProviderDraft, existing?: SearchProv
   };
 }
 
-function createMessage(role: ThinkMessage["role"], content: string): ThinkMessage {
-  return {
-    id: makeId(),
-    role,
-    content,
-    createdAt: nowIso()
-  };
-}
-
 function importSummaryLine(summary: ImportSummary): string {
-  return `${summary.message} Models ${summary.modelProviders}, chats ${summary.chatSessions}, recall ${summary.recallItems}, research ${summary.deepDives}, tasks ${summary.tasks}, extensions ${summary.extensions}.`;
+  return `${summary.message} Models ${summary.modelProviders}, chats ${summary.chatSessions}, recall ${summary.recallItems}, tasks ${summary.tasks}, skills ${summary.skills}.`;
 }
 
-export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
-  const [selectedTab, setSelectedTab] = useState<PanelTab>("chat");
+function shouldCapturePage(prompt: string): boolean {
+  return /current page|this page|page|tab|article|summarize|summary|analyze|read|网页|页面|当前|总结|分析|阅读/i.test(prompt);
+}
+
+function shouldRunBrowserAction(prompt: string): boolean {
+  return /click|type|fill|open|visit|go to|scroll|press|navigate|submit|登录|点击|输入|填写|打开|滚动|按下|提交/i.test(
+    prompt
+  );
+}
+
+export function OverthinkSidePanel({ activeTab, agentPrompt }: OverthinkSidePanelProps) {
+  const [view, setView] = useState<PanelView>("agent");
   const [busy, setBusy] = useState<BusyState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -207,28 +216,22 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
   const [providerDraft, setProviderDraft] = useState<ModelProviderDraft>(blankProviderDraft);
   const [searchProviderDraft, setSearchProviderDraft] = useState<SearchProviderDraft>(blankSearchProviderDraft);
   const [modelTest, setModelTest] = useState<ModelTestResult | null>(null);
-  const [pageBrief, setPageBrief] = useState<PageBrief | null>(null);
-  const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
-  const [documents, setDocuments] = useState<DocumentExtraction[]>([]);
   const [sessions, setSessions] = useState<ThinkChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState(makeId);
   const [messages, setMessages] = useState<ThinkMessage[]>([]);
   const [draft, setDraft] = useState("");
-  const [activeChatStreamId, setActiveChatStreamId] = useState<string | null>(null);
-  const [agentObjective, setAgentObjective] = useState("");
-  const [agentSteps, setAgentSteps] = useState<AgentStepEvent[]>([]);
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const [clickX, setClickX] = useState("120");
-  const [clickY, setClickY] = useState("120");
-  const [typeText, setTypeText] = useState("");
-  const [deepQuery, setDeepQuery] = useState("");
-  const [deepOutput, setDeepOutput] = useState("");
-  const [deepHistory, setDeepHistory] = useState<DeepDiveRecord[]>([]);
+  const [pageBrief, setPageBrief] = useState<PageBrief | null>(null);
+  const [documents, setDocuments] = useState<DocumentExtraction[]>([]);
   const [recallItems, setRecallItems] = useState<RecallItem[]>([]);
   const [recallDraft, setRecallDraft] = useState("");
   const [recallQuery, setRecallQuery] = useState("");
-  const [tasks, setTasks] = useState<OverthinkTask[]>([]);
-  const [extensions, setExtensions] = useState<ExtensionRecord[]>([]);
+  const [marketplace, setMarketplace] = useState<SkillMarketplaceState>(emptyMarketplace);
+  const [installedSkills, setInstalledSkills] = useState<SkillRecord[]>([]);
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [skillQuery, setSkillQuery] = useState("");
+  const [agentSteps, setAgentSteps] = useState<AgentStepEvent[]>([]);
+  const [activeChatStreamId, setActiveChatStreamId] = useState<string | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
 
   const messagesRef = useRef<ThinkMessage[]>([]);
   const sessionsRef = useRef<ThinkChatSession[]>([]);
@@ -236,11 +239,8 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
   const activeTabRef = useRef<BrowserTabState | null>(activeTab);
   const pendingAssistantIdRef = useRef<string | null>(null);
   const activeChatStreamRef = useRef<string | null>(null);
-  const activeDeepStreamRef = useRef<string | null>(null);
-  const deepOutputRef = useRef("");
-  const deepQueryRef = useRef(deepQuery);
-  const deepHistoryRef = useRef<DeepDiveRecord[]>([]);
   const activeTaskRef = useRef<string | null>(null);
+  const consumedPromptRef = useRef<string | null>(null);
 
   const activeProvider = useMemo(
     () => settings.providers.find((provider) => provider.id === settings.activeProviderId) ?? null,
@@ -249,6 +249,20 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
   const hasModelConfig = Boolean(activeProvider?.enabled && activeProvider.baseUrl && activeProvider.chatModel);
   const isBusy = busy !== "idle";
   const contextUrl = compactUrl(activeTab?.url ?? "");
+  const pendingApprovalSteps = agentSteps.filter((step) => step.approval?.status === "pending");
+  const visibleRecall = recallItems.filter((item) =>
+    recallQuery.trim() ? item.text.toLowerCase().includes(recallQuery.trim().toLowerCase()) : true
+  );
+  const visibleSkills = marketplace.entries.filter((entry) => {
+    const query = skillQuery.trim().toLowerCase();
+    if (!query) {
+      return true;
+    }
+    return [entry.name, entry.description, entry.tags.join(" "), entry.triggers.join(" ")]
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  });
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -267,14 +281,6 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
   }, [activeTab]);
 
   useEffect(() => {
-    deepQueryRef.current = deepQuery;
-  }, [deepQuery]);
-
-  useEffect(() => {
-    deepHistoryRef.current = deepHistory;
-  }, [deepHistory]);
-
-  useEffect(() => {
     activeChatStreamRef.current = activeChatStreamId;
   }, [activeChatStreamId]);
 
@@ -288,10 +294,8 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
 
   useEffect(() => {
     const openSection = (event: Event) => {
-      const detail = (event as CustomEvent<PanelTab>).detail;
-      if (["chat", "agent", "dive", "recall", "tasks", "extensions", "models", "data"].includes(detail)) {
-        setSelectedTab(detail);
-      }
+      const detail = (event as CustomEvent<PanelView | "models">).detail;
+      setView(detail === "models" ? "settings" : detail);
     };
 
     window.addEventListener("overthink:open-section", openSection);
@@ -299,31 +303,9 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
   }, []);
 
   useEffect(() => {
-    if (!settings.providers.length) {
-      setSelectedTab("models");
-    }
-  }, [settings.providers.length]);
-
-  useEffect(() => {
-    setPageBrief(null);
-    setScreenshotDataUrl(null);
-    setDocuments([]);
-  }, [activeTab?.id]);
-
-  useEffect(() => {
     const unsubscribe = window.overthink.chat.onEvent((event) => {
       if (event.streamId === activeChatStreamRef.current) {
         handleChatEvent(event.type, event.delta, event.message);
-      }
-    });
-
-    return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    const unsubscribe = window.overthink.research.onEvent((event) => {
-      if (event.researchId === activeDeepStreamRef.current) {
-        handleDeepEvent(event.type, event.delta, event.message, event.record);
       }
     });
 
@@ -337,34 +319,54 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
       }
 
       setAgentSteps((items) => [...items, event]);
-      if (event.task) {
-        setTasks((items) => [event.task as OverthinkTask, ...items.filter((item) => item.id !== event.task?.id)]);
+
+      if (event.type === "approval") {
+        setBusy("idle");
       }
+
       if (["complete", "error", "stopped"].includes(event.type)) {
-        setActiveTaskId(null);
+        const targetId = pendingAssistantIdRef.current;
+        const content = event.detail || event.title;
+        if (targetId) {
+          const nextMessages = updateMessages((items) =>
+            items.map((item) => (item.id === targetId ? { ...item, content } : item))
+          );
+          void saveChatSession(nextMessages);
+        }
+        pendingAssistantIdRef.current = null;
         activeTaskRef.current = null;
+        setActiveTaskId(null);
+        setBusy("idle");
       }
     });
 
     return unsubscribe;
   }, []);
 
-  const updateMessages = (updater: (items: ThinkMessage[]) => ThinkMessage[]) => {
-    setMessages((items) => {
-      const next = updater(items);
-      messagesRef.current = next;
-      return next;
-    });
-  };
+  useEffect(() => {
+    setPageBrief(null);
+    setDocuments([]);
+  }, [activeTab?.id]);
 
-  const loadState = async () => {
-    const [nextSettings, stored] = await Promise.all([
+  useEffect(() => {
+    if (!agentPrompt || consumedPromptRef.current === agentPrompt.id) {
+      return;
+    }
+
+    consumedPromptRef.current = agentPrompt.id;
+    setView("agent");
+    void runAgentTurn(agentPrompt.prompt);
+  }, [agentPrompt]);
+
+  async function loadState() {
+    const [nextSettings, stored, nextMarketplace, nextInstalled] = await Promise.all([
       window.overthink.models.getSettings(),
       window.overthink.storage.get<{
         thinkChatSessions?: ThinkChatSession[];
         recallItems?: RecallItem[];
-        deepDiveHistory?: DeepDiveRecord[];
-      }>("local", [CHAT_KEY, RECALL_KEY, DEEP_DIVE_KEY])
+      }>("local", [CHAT_KEY, RECALL_KEY]),
+      window.overthink.skills.listMarketplace(),
+      window.overthink.skills.listInstalled()
     ]);
 
     setSettings(nextSettings);
@@ -373,18 +375,29 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
       searchProviderToDraft(nextSettings.searchProviders.find((provider) => provider.id === nextSettings.activeSearchProviderId) ?? null)
     );
     setSessions(Array.isArray(stored.thinkChatSessions) ? stored.thinkChatSessions : []);
+    sessionsRef.current = Array.isArray(stored.thinkChatSessions) ? stored.thinkChatSessions : [];
     setRecallItems(Array.isArray(stored.recallItems) ? stored.recallItems : []);
-    setDeepHistory(Array.isArray(stored.deepDiveHistory) ? stored.deepDiveHistory : []);
-    setTasks(await window.overthink.tasks.list());
-    setExtensions(await window.overthink.extensions.list());
-  };
+    setMarketplace(nextMarketplace);
+    setInstalledSkills(nextInstalled);
 
-  const saveChatSession = async (nextMessages: ThinkMessage[]) => {
+    if (!nextSettings.providers.length) {
+      setView("settings");
+    }
+  }
+
+  function updateMessages(updater: (items: ThinkMessage[]) => ThinkMessage[]): ThinkMessage[] {
+    const nextMessages = updater(messagesRef.current);
+    messagesRef.current = nextMessages;
+    setMessages(nextMessages);
+    return nextMessages;
+  }
+
+  async function saveChatSession(nextMessages: ThinkMessage[]) {
     if (nextMessages.length === 0) {
       return;
     }
 
-    const title = nextMessages.find((message) => message.role === "user")?.content.slice(0, 64) || "Think Chat";
+    const title = nextMessages.find((message) => message.role === "user")?.content.slice(0, 64) || "Agent chat";
     const session: ThinkChatSession = {
       id: currentSessionIdRef.current,
       title,
@@ -392,45 +405,29 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
       pageUrl: activeTabRef.current?.url,
       updatedAt: nowIso()
     };
-    const nextSessions = [session, ...sessionsRef.current.filter((item) => item.id !== currentSessionIdRef.current)].slice(
-      0,
-      20
-    );
+    const nextSessions = [session, ...sessionsRef.current.filter((item) => item.id !== currentSessionIdRef.current)].slice(0, 30);
     sessionsRef.current = nextSessions;
     setSessions(nextSessions);
     await window.overthink.storage.set("local", { [CHAT_KEY]: nextSessions });
-  };
+  }
 
-  const captureBrief = async () => {
+  async function captureBrief(): Promise<PageBrief | null> {
     setBusy("brief");
     setError(null);
     try {
       const brief = await window.overthink.page.captureBrief(activeTab?.id);
       setPageBrief(brief);
-      await window.overthink.storage.set("session", { lastPageBrief: brief });
-      setNotice(`Page Brief captured: ${brief.title}`);
+      setNotice(`Page context ready: ${brief.title || compactUrl(brief.url)}`);
+      return brief;
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Page Brief failed.");
+      setError(nextError instanceof Error ? nextError.message : "Page capture failed.");
+      return null;
     } finally {
       setBusy("idle");
     }
-  };
+  }
 
-  const captureScreenshot = async () => {
-    setBusy("shot");
-    setError(null);
-    try {
-      const dataUrl = await window.overthink.browser.captureActiveTab();
-      setScreenshotDataUrl(dataUrl);
-      setNotice(dataUrl ? "Screenshot captured." : "No active tab to capture.");
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Screenshot failed.");
-    } finally {
-      setBusy("idle");
-    }
-  };
-
-  const attachDocument = async () => {
+  async function attachDocument() {
     setBusy("doc");
     setError(null);
     try {
@@ -440,22 +437,20 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
         setNotice(`Attached ${document.name}.`);
       }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Document Extractor failed.");
+      setError(nextError instanceof Error ? nextError.message : "Document extraction failed.");
     } finally {
       setBusy("idle");
     }
-  };
+  }
 
-  const startChat = async (event: FormEvent<HTMLFormElement>) => {
+  async function submitAgentTurn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const content = draft.trim();
-    if (!content || activeChatStreamId) {
-      return;
-    }
+    await runAgentTurn(draft);
+  }
 
-    if (!hasModelConfig) {
-      setSelectedTab("models");
-      setError("Model Settings are required before Think Chat can call a model.");
+  async function runAgentTurn(rawContent: string) {
+    const content = rawContent.trim();
+    if (!content || activeChatStreamRef.current || activeTaskRef.current) {
       return;
     }
 
@@ -468,39 +463,74 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
 
     setDraft("");
     setError(null);
-    setBusy("chat");
+    setNotice(null);
+    setAgentSteps([]);
     pendingAssistantIdRef.current = assistantMessage.id;
     updateMessages((items) => [...items, userMessage, assistantMessage]);
 
+    if (shouldRunBrowserAction(content)) {
+      setBusy("agent");
+      try {
+        const taskId = await window.overthink.agent.start({ objective: content, tabId: activeTab?.id });
+        activeTaskRef.current = taskId;
+        setActiveTaskId(taskId);
+      } catch (nextError) {
+        pendingAssistantIdRef.current = null;
+        setBusy("idle");
+        setError(nextError instanceof Error ? nextError.message : "Agent task failed.");
+      }
+      return;
+    }
+
+    if (!hasModelConfig) {
+      setView("settings");
+      setBusy("idle");
+      const nextMessages = updateMessages((items) =>
+        items.map((item) =>
+          item.id === assistantMessage.id
+            ? { ...item, content: "Configure a chat model before Overthink can answer." }
+            : item
+        )
+      );
+      await saveChatSession(nextMessages);
+      return;
+    }
+
+    const brief = shouldCapturePage(content) ? pageBrief ?? (await captureBrief()) : pageBrief;
+
+    setBusy("chat");
     try {
       const streamId = await window.overthink.chat.start({
-        sessionId: currentSessionId,
+        sessionId: currentSessionIdRef.current,
         providerId: settings.activeProviderId,
         messages: requestMessages,
         context: {
-          pageBrief,
-          screenshotDataUrl,
+          pageBrief: brief,
           documents
         }
       });
-      setActiveChatStreamId(streamId);
       activeChatStreamRef.current = streamId;
+      setActiveChatStreamId(streamId);
     } catch (nextError) {
       pendingAssistantIdRef.current = null;
-      setBusy("idle");
+      activeChatStreamRef.current = null;
       setActiveChatStreamId(null);
-      setError(nextError instanceof Error ? nextError.message : "Think Chat failed.");
+      setBusy("idle");
+      setError(nextError instanceof Error ? nextError.message : "Agent chat failed.");
     }
-  };
+  }
 
-  const stopChat = async () => {
-    if (!activeChatStreamId) {
-      return;
+  async function stopActiveTurn() {
+    if (activeChatStreamId) {
+      await window.overthink.chat.stop(activeChatStreamId);
     }
-    await window.overthink.chat.stop(activeChatStreamId);
-  };
 
-  const handleChatEvent = (type: string, delta?: string, message?: string) => {
+    if (activeTaskId) {
+      await window.overthink.agent.stop(activeTaskId);
+    }
+  }
+
+  function handleChatEvent(type: string, delta?: string, message?: string) {
     const targetId = pendingAssistantIdRef.current;
     if (!targetId) {
       return;
@@ -523,26 +553,29 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
 
     if (["complete", "error", "stopped"].includes(type)) {
       pendingAssistantIdRef.current = null;
-      setActiveChatStreamId(null);
       activeChatStreamRef.current = null;
+      setActiveChatStreamId(null);
       setBusy("idle");
       void saveChatSession(messagesRef.current);
     }
-  };
+  }
 
-  const startNewChat = () => {
-    if (activeChatStreamId) {
-      void stopChat();
-    }
+  function startNewChat() {
+    void stopActiveTurn();
     const nextSessionId = makeId();
     setCurrentSessionId(nextSessionId);
     currentSessionIdRef.current = nextSessionId;
     setMessages([]);
     messagesRef.current = [];
+    setAgentSteps([]);
     pendingAssistantIdRef.current = null;
-  };
+    activeTaskRef.current = null;
+    activeChatStreamRef.current = null;
+    setActiveTaskId(null);
+    setActiveChatStreamId(null);
+  }
 
-  const restoreSession = (sessionId: string) => {
+  function restoreSession(sessionId: string) {
     const session = sessions.find((item) => item.id === sessionId);
     if (!session) {
       return;
@@ -552,9 +585,19 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
     currentSessionIdRef.current = session.id;
     setMessages(session.messages);
     messagesRef.current = session.messages;
-  };
+    setAgentSteps([]);
+  }
 
-  const saveModel = async () => {
+  async function approveAgentAction(taskId: string, approvalId: string) {
+    setBusy("agent");
+    await window.overthink.tasks.approve(taskId, approvalId);
+  }
+
+  async function rejectAgentAction(taskId: string, approvalId: string) {
+    await window.overthink.tasks.reject(taskId, approvalId);
+  }
+
+  async function saveModel() {
     if (!providerDraft.baseUrl.trim() || !providerDraft.chatModel.trim()) {
       setModelTest({
         ok: false,
@@ -581,9 +624,10 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
     setProviderDraft(providerToDraft(provider));
     setModelTest({ ok: true, status: null, message: "Saved.", latencyMs: 0 });
     setError(null);
-  };
+    setNotice("Model settings saved.");
+  }
 
-  const testModel = async (mode: "chat" | "vision") => {
+  async function testModel(mode: "chat" | "vision") {
     setBusy("model");
     setModelTest(null);
     try {
@@ -592,9 +636,9 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
     } finally {
       setBusy("idle");
     }
-  };
+  }
 
-  const deleteModel = async (providerId: string) => {
+  async function deleteModel(providerId: string) {
     const providers = settings.providers.filter((provider) => provider.id !== providerId);
     const nextSettings = await window.overthink.models.saveSettings({
       providers,
@@ -605,9 +649,9 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
     });
     setSettings(nextSettings);
     setProviderDraft(providerToDraft(nextSettings.providers[0] ?? null));
-  };
+  }
 
-  const saveSearchProvider = async () => {
+  async function saveSearchProvider() {
     if (!searchProviderDraft.baseUrl.trim()) {
       setModelTest({ ok: false, status: null, message: "Search Base URL is required.", latencyMs: 0 });
       return;
@@ -625,10 +669,10 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
     });
     setSettings(nextSettings);
     setSearchProviderDraft(searchProviderToDraft(provider));
-    setModelTest({ ok: true, status: null, message: "Search provider saved.", latencyMs: 0 });
-  };
+    setNotice("Search provider saved.");
+  }
 
-  const deleteSearchProvider = async (providerId: string) => {
+  async function deleteSearchProvider(providerId: string) {
     const searchProviders = settings.searchProviders.filter((provider) => provider.id !== providerId);
     const nextSettings = await window.overthink.models.saveSettings({
       ...settings,
@@ -637,114 +681,10 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
     });
     setSettings(nextSettings);
     setSearchProviderDraft(searchProviderToDraft(nextSettings.searchProviders[0] ?? null));
-  };
+  }
 
-  const startAgent = async () => {
-    const objective = agentObjective.trim();
-    if (!objective || activeTaskId) {
-      return;
-    }
-
-    setAgentSteps([]);
-    setError(null);
-    const taskId = await window.overthink.agent.start({ objective, tabId: activeTab?.id });
-    activeTaskRef.current = taskId;
-    setActiveTaskId(taskId);
-  };
-
-  const stopAgent = async () => {
-    if (!activeTaskId) {
-      return;
-    }
-    await window.overthink.agent.stop(activeTaskId);
-  };
-
-  const runDebuggerAction = async (action: "click" | "type" | "scroll" | "enter") => {
-    setError(null);
-    try {
-      if (action === "click") {
-        await window.overthink.debugger.click({
-          tabId: activeTab?.id,
-          x: Number(clickX) || 0,
-          y: Number(clickY) || 0
-        });
-      }
-
-      if (action === "type") {
-        await window.overthink.debugger.type({ tabId: activeTab?.id, text: typeText });
-      }
-
-      if (action === "scroll") {
-        await window.overthink.debugger.scroll({ tabId: activeTab?.id, deltaY: 520 });
-      }
-
-      if (action === "enter") {
-        await window.overthink.debugger.key({ tabId: activeTab?.id, key: "Enter" });
-      }
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Debugger action failed.");
-    }
-  };
-
-  const runDeepDive = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const query = deepQuery.trim();
-    if (!query || activeDeepStreamRef.current) {
-      return;
-    }
-
-    setBusy("dive");
-    setDeepOutput("");
-    deepOutputRef.current = "";
-    setError(null);
-
-    try {
-      const streamId = await window.overthink.research.start({
-        query,
-        tabId: activeTab?.id,
-        pageBrief,
-        documents
-      });
-      activeDeepStreamRef.current = streamId;
-    } catch (nextError) {
-      setBusy("idle");
-      setError(nextError instanceof Error ? nextError.message : "Deep Dive failed.");
-    }
-  };
-
-  const handleDeepEvent = (type: string, delta?: string, message?: string, record?: DeepDiveRecord) => {
-    if (type === "delta" && delta) {
-      deepOutputRef.current += delta;
-      setDeepOutput(deepOutputRef.current);
-      return;
-    }
-
-    if (type === "error" || type === "stopped") {
-      deepOutputRef.current = message || (type === "stopped" ? "Stopped." : "Request failed.");
-      setDeepOutput(deepOutputRef.current);
-    }
-
-    if (["complete", "error", "stopped"].includes(type)) {
-      setBusy("idle");
-      const nextRecord =
-        record ??
-        ({
-          id: makeId(),
-          query: deepQueryRef.current.trim(),
-          result: deepOutputRef.current,
-          sources: [],
-          citations: [],
-          createdAt: nowIso()
-        } satisfies DeepDiveRecord);
-      const nextHistory = [nextRecord, ...deepHistoryRef.current.filter((item) => item.id !== nextRecord.id)].slice(0, 12);
-      deepHistoryRef.current = nextHistory;
-      setDeepHistory(nextHistory);
-      activeDeepStreamRef.current = null;
-    }
-  };
-
-  const addRecall = async () => {
-    const text = recallDraft.trim() || pageBrief?.selectedText || pageBrief?.excerpt || "";
+  async function addRecall() {
+    const text = recallDraft.trim();
     if (!text) {
       return;
     }
@@ -752,182 +692,169 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
     const item: RecallItem = {
       id: makeId(),
       text,
-      source: recallDraft.trim() ? "manual" : "page",
-      url: activeTab?.url,
+      source: "manual",
       enabled: true,
       createdAt: nowIso()
     };
     const nextItems = [item, ...recallItems].slice(0, 200);
-    setRecallDraft("");
     setRecallItems(nextItems);
+    setRecallDraft("");
     await window.overthink.storage.set("local", { [RECALL_KEY]: nextItems });
-  };
+  }
 
-  const toggleRecall = async (itemId: string) => {
+  async function toggleRecall(itemId: string) {
     const nextItems = recallItems.map((item) => (item.id === itemId ? { ...item, enabled: !item.enabled } : item));
     setRecallItems(nextItems);
     await window.overthink.storage.set("local", { [RECALL_KEY]: nextItems });
-  };
+  }
 
-  const deleteRecall = async (itemId: string) => {
+  async function deleteRecall(itemId: string) {
     const nextItems = recallItems.filter((item) => item.id !== itemId);
     setRecallItems(nextItems);
     await window.overthink.storage.set("local", { [RECALL_KEY]: nextItems });
-  };
+  }
 
-  const approveAgentAction = async (taskId: string, approvalId: string) => {
-    const task = await window.overthink.tasks.approve(taskId, approvalId);
-    if (task) {
-      setTasks((items) => [task, ...items.filter((item) => item.id !== task.id)]);
-    }
-  };
-
-  const rejectAgentAction = async (taskId: string, approvalId: string) => {
-    const task = await window.overthink.tasks.reject(taskId, approvalId);
-    if (task) {
-      setTasks((items) => [task, ...items.filter((item) => item.id !== task.id)]);
-    }
-  };
-
-  const installExtension = async () => {
-    const record = await window.overthink.extensions.install();
-    if (record) {
-      setExtensions(await window.overthink.extensions.list());
-      setNotice(`Installed ${record.name}.`);
-    }
-  };
-
-  const setExtensionEnabled = async (extensionId: string, enabled: boolean) => {
-    setExtensions(await window.overthink.extensions.setEnabled(extensionId, enabled));
-  };
-
-  const removeExtension = async (extensionId: string) => {
-    setExtensions(await window.overthink.extensions.remove(extensionId));
-  };
-
-  const exportData = async () => {
-    const summary = await window.overthink.data.exportAll();
-    setNotice(importSummaryLine(summary));
-  };
-
-  const importData = async () => {
-    const summary = await window.overthink.data.importAll();
-    setNotice(importSummaryLine(summary));
-    if (summary.imported) {
+  async function importData() {
+    setBusy("data");
+    try {
+      const summary = await window.overthink.data.importAll();
+      setNotice(importSummaryLine(summary));
       await loadState();
+    } finally {
+      setBusy("idle");
     }
-  };
+  }
 
-  const visibleRecall = recallItems.filter((item) =>
-    item.text.toLowerCase().includes(recallQuery.trim().toLowerCase())
-  );
+  async function exportData() {
+    setBusy("data");
+    try {
+      const summary = await window.overthink.data.exportAll();
+      setNotice(importSummaryLine(summary));
+    } finally {
+      setBusy("idle");
+    }
+  }
 
-  return (
-    <div className="overthink-panel">
-      <nav className="side-tabs" aria-label="Overthink sections">
-        {PANEL_TABS.map(({ id: tabId, icon: Icon, label }) => (
-          <button
-            aria-selected={selectedTab === tabId}
-            className={selectedTab === tabId ? "side-tab active" : "side-tab"}
-            key={tabId}
-            onClick={() => setSelectedTab(tabId)}
-            role="tab"
-            type="button"
-          >
-            <Icon size={15} />
-            <span>{label}</span>
-          </button>
-        ))}
-      </nav>
+  async function refreshSkills() {
+    setBusy("skills");
+    try {
+      const nextMarketplace = await window.overthink.skills.refreshSources();
+      const nextInstalled = await window.overthink.skills.listInstalled();
+      setMarketplace(nextMarketplace);
+      setInstalledSkills(nextInstalled);
+    } finally {
+      setBusy("idle");
+    }
+  }
 
-      <div className="page-context-line">
-        <span>{activeTab?.title || "New Tab"}</span>
-        {contextUrl ? <small>{contextUrl}</small> : null}
-      </div>
+  async function installSkill(entry: SkillMarketplaceEntry) {
+    setBusy("skills");
+    try {
+      await window.overthink.skills.install({ skillId: entry.id, sourceId: entry.sourceId });
+      const [nextMarketplace, nextInstalled] = await Promise.all([
+        window.overthink.skills.listMarketplace(),
+        window.overthink.skills.listInstalled()
+      ]);
+      setMarketplace(nextMarketplace);
+      setInstalledSkills(nextInstalled);
+    } finally {
+      setBusy("idle");
+    }
+  }
 
-      {error ? (
-        <div className="status-banner danger">
+  async function setSkillEnabled(skillId: string, enabled: boolean) {
+    const nextInstalled = await window.overthink.skills.setEnabled(skillId, enabled);
+    const nextMarketplace = await window.overthink.skills.listMarketplace();
+    setInstalledSkills(nextInstalled);
+    setMarketplace(nextMarketplace);
+  }
+
+  async function removeSkill(skillId: string) {
+    const nextInstalled = await window.overthink.skills.remove(skillId);
+    const nextMarketplace = await window.overthink.skills.listMarketplace();
+    setInstalledSkills(nextInstalled);
+    setMarketplace(nextMarketplace);
+  }
+
+  async function addRemoteSource() {
+    const url = sourceUrl.trim();
+    if (!url) {
+      return;
+    }
+
+    let sourceName = "Remote source";
+    try {
+      sourceName = new URL(url).hostname.replace(/^www\./, "") || sourceName;
+    } catch {
+      setError("Enter a valid marketplace JSON URL.");
+      return;
+    }
+
+    const source: SkillMarketplaceSource = {
+      id: `remote-${makeId()}`,
+      name: sourceName,
+      kind: "remote",
+      url,
+      enabled: true
+    };
+    const nextMarketplace = await window.overthink.skills.saveSources([...marketplace.sources, source]);
+    setMarketplace(nextMarketplace);
+    setSourceUrl("");
+    await refreshSkills();
+  }
+
+  function renderStatus() {
+    if (error) {
+      return (
+        <div className="agent-status danger">
           <AlertTriangle size={15} />
           <span>{error}</span>
         </div>
-      ) : null}
+      );
+    }
 
-      {notice ? (
-        <div className="status-banner">
+    if (notice) {
+      return (
+        <div className="agent-status">
           <CheckCircle2 size={15} />
           <span>{notice}</span>
         </div>
-      ) : null}
-
-      <section className="side-panel-content">
-        {selectedTab === "chat" ? renderChat() : null}
-        {selectedTab === "agent" ? renderAgent() : null}
-        {selectedTab === "dive" ? renderDeepDive() : null}
-        {selectedTab === "recall" ? renderRecall() : null}
-        {selectedTab === "tasks" ? renderTasks() : null}
-        {selectedTab === "extensions" ? renderExtensions() : null}
-        {selectedTab === "models" ? renderModels() : null}
-        {selectedTab === "data" ? renderData() : null}
-      </section>
-    </div>
-  );
-
-  function renderContextActions() {
-    return (
-      <div className="context-actions">
-        <button disabled={isBusy || !activeTab} onClick={captureBrief} type="button">
-          <BookOpenText size={15} />
-          <span>{busy === "brief" ? "Reading" : "Page Brief"}</span>
-        </button>
-        <button disabled={isBusy || !activeTab} onClick={captureScreenshot} type="button">
-          <Camera size={15} />
-          <span>{busy === "shot" ? "Capturing" : "Screenshot"}</span>
-        </button>
-        <button disabled={isBusy} onClick={attachDocument} type="button">
-          <FileText size={15} />
-          <span>{busy === "doc" ? "Extracting" : "Document"}</span>
-        </button>
-      </div>
-    );
-  }
-
-  function renderBrief() {
-    if (!pageBrief) {
-      return <div className="empty-panel">No Page Brief</div>;
+      );
     }
 
+    return null;
+  }
+
+  function renderContextCard() {
     return (
-      <div className="brief-panel">
-        <div className="brief-head">
-          <strong>{pageBrief.title}</strong>
-          <span>{pageBrief.wordCount} words</span>
+      <section className="agent-context-card">
+        <div>
+          <span className="eyebrow">Current tab</span>
+          <strong>{activeTab?.title || "No active page"}</strong>
+          <small>{contextUrl || "Open a page to give the agent browsing context."}</small>
         </div>
-        {pageBrief.description ? <p>{truncate(pageBrief.description, 180)}</p> : null}
-        <p>{truncate(pageBrief.selectedText || pageBrief.excerpt || "No readable text found.", 360)}</p>
-        {pageBrief.headings.length ? (
-          <ol>
-            {pageBrief.headings.slice(0, 5).map((heading) => (
-              <li key={`${heading.level}-${heading.text}`}>{heading.text}</li>
-            ))}
-          </ol>
-        ) : null}
-      </div>
+        <div className="context-mini-actions">
+          <button disabled={!activeTab || isBusy} onClick={() => void captureBrief()} title="Read page" type="button">
+            <Globe2 size={14} />
+          </button>
+          <button disabled={isBusy} onClick={() => void attachDocument()} title="Attach document" type="button">
+            <FilePlus2 size={14} />
+          </button>
+          <button onClick={startNewChat} title="New chat" type="button">
+            <Plus size={14} />
+          </button>
+        </div>
+      </section>
     );
   }
 
-  function renderChat() {
+  function renderAgent() {
     return (
-      <div className="panel-stack">
-        {renderContextActions()}
-        {renderBrief()}
-
-        <div className="chat-history-row">
-          <button onClick={startNewChat} type="button">
-            <Plus size={14} />
-            <span>New</span>
-          </button>
+      <div className="agent-view">
+        {renderContextCard()}
+        <div className="agent-session-row">
           <select onChange={(event) => restoreSession(event.target.value)} value={currentSessionId}>
-            <option value={currentSessionId}>Current chat</option>
+            <option value={currentSessionId}>Current conversation</option>
             {sessions.map((session) => (
               <option key={session.id} value={session.id}>
                 {session.title}
@@ -936,32 +863,40 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
           </select>
         </div>
 
-        <div className="message-list">
-          {messages.length === 0 ? <div className="empty-panel">Think Chat</div> : null}
+        <div className="agent-timeline">
+          {messages.length === 0 ? (
+            <div className="agent-empty">
+              <Sparkles size={18} />
+              <strong>Ask from the page, or ask the agent to act.</strong>
+              <span>Overthink will answer directly, read the page, search, or request approval before browser actions.</span>
+            </div>
+          ) : null}
           {messages.map((message) => (
-            <div className={`think-message ${message.role}`} key={message.id}>
-              {message.content || (message.role === "assistant" ? "..." : "")}
+            <div className={`agent-message ${message.role}`} key={message.id}>
+              {message.content || (message.role === "assistant" ? "Thinking..." : "")}
             </div>
           ))}
-        </div>
-
-        <form className="prompt-row" onSubmit={startChat}>
-          <textarea
-            aria-label="Think Chat input"
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder={hasModelConfig ? "Ask from this page" : "Configure a model first"}
-            rows={3}
-            value={draft}
-          />
-          <button disabled={!draft.trim() || Boolean(activeChatStreamId)} title="Send" type="submit">
-            <SendHorizontal size={17} />
-          </button>
-          {activeChatStreamId ? (
-            <button className="secondary-icon" onClick={stopChat} title="Stop" type="button">
-              <Square size={15} />
-            </button>
+          {agentSteps.length ? (
+            <div className="agent-step-stack">
+              {agentSteps.map((step, index) => (
+                <div className={`agent-step-card ${step.type}`} key={`${step.taskId}-${index}`}>
+                  <strong>{step.title}</strong>
+                  {step.detail ? <p>{step.detail}</p> : null}
+                  {step.approval?.status === "pending" ? (
+                    <div className="approval-row">
+                      <button onClick={() => void approveAgentAction(step.taskId, step.approval?.id ?? "")} type="button">
+                        Approve
+                      </button>
+                      <button onClick={() => void rejectAgentAction(step.taskId, step.approval?.id ?? "")} type="button">
+                        Reject
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
           ) : null}
-        </form>
+        </div>
 
         {documents.length ? (
           <div className="attachment-row">
@@ -971,257 +906,143 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
           </div>
         ) : null}
 
-        {screenshotDataUrl ? <img alt="Current tab screenshot" className="shot-preview" src={screenshotDataUrl} /> : null}
-      </div>
-    );
-  }
+        {pendingApprovalSteps.length ? <div className="approval-banner">Approval required before continuing.</div> : null}
 
-  function renderAgent() {
-    return (
-      <div className="panel-stack">
-        <textarea
-          aria-label="Agent task"
-          className="large-input"
-          onChange={(event) => setAgentObjective(event.target.value)}
-          placeholder="Objective"
-          rows={4}
-          value={agentObjective}
-        />
-        <div className="button-row">
-          <button disabled={!agentObjective.trim() || Boolean(activeTaskId)} onClick={startAgent} type="button">
-            <Play size={15} />
-            <span>Start</span>
-          </button>
-          <button disabled={!activeTaskId} onClick={stopAgent} type="button">
-            <Square size={15} />
-            <span>Stop</span>
-          </button>
-          <button
-            onClick={() => {
-              setAgentSteps([]);
-              setAgentObjective("");
-            }}
-            type="button"
-          >
-            <RotateCcw size={15} />
-            <span>Reset</span>
-          </button>
-        </div>
-
-        <div className="tool-grid">
-          <input aria-label="Click X" onChange={(event) => setClickX(event.target.value)} value={clickX} />
-          <input aria-label="Click Y" onChange={(event) => setClickY(event.target.value)} value={clickY} />
-          <button onClick={() => void runDebuggerAction("click")} type="button">
-            Click
-          </button>
-          <button onClick={() => void runDebuggerAction("scroll")} type="button">
-            Scroll
-          </button>
-          <input
-            aria-label="Type text"
-            className="tool-text"
-            onChange={(event) => setTypeText(event.target.value)}
-            value={typeText}
-          />
-          <button onClick={() => void runDebuggerAction("type")} type="button">
-            Type
-          </button>
-          <button onClick={() => void runDebuggerAction("enter")} type="button">
-            Enter
-          </button>
-        </div>
-
-        <div className="step-list">
-          {agentSteps.length === 0 ? <div className="empty-panel">Overthink Agent</div> : null}
-          {agentSteps.map((step, index) => (
-            <div className={`agent-step ${step.type}`} key={`${step.taskId}-${index}`}>
-              <strong>{step.title}</strong>
-              {step.detail ? <p>{step.detail}</p> : null}
-              {step.approval?.status === "pending" ? (
-                <div className="approval-actions">
-                  <button onClick={() => void approveAgentAction(step.taskId, step.approval?.id ?? "")} type="button">
-                    Approve
-                  </button>
-                  <button onClick={() => void rejectAgentAction(step.taskId, step.approval?.id ?? "")} type="button">
-                    Reject
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  function renderDeepDive() {
-    return (
-      <div className="panel-stack">
-        {renderContextActions()}
-        <form className="deep-form" onSubmit={runDeepDive}>
+        <form className="agent-composer" onSubmit={submitAgentTurn}>
           <textarea
-            aria-label="Deep Dive query"
-            onChange={(event) => setDeepQuery(event.target.value)}
-            placeholder={hasModelConfig ? "Research question" : "Configure a model first"}
-            rows={4}
-            value={deepQuery}
+            aria-label="Ask Overthink"
+            disabled={Boolean(activeChatStreamId || activeTaskId)}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+            placeholder={hasModelConfig ? "Ask, research, or tell the agent what to do" : "Configure a model or ask for browser actions"}
+            rows={3}
+            value={draft}
           />
-          <button disabled={!deepQuery.trim() || busy === "dive"} type="submit">
-            <Search size={15} />
-            <span>{busy === "dive" ? "Running" : "Run"}</span>
+          <button disabled={!draft.trim() || Boolean(activeChatStreamId || activeTaskId)} title="Send" type="submit">
+            <SendHorizontal size={17} />
           </button>
-        </form>
-        <div className="report-panel">{deepOutput || "Deep Dive"}</div>
-        <div className="history-list">
-          {deepHistory.map((record) => (
-            <button
-              key={record.id}
-              onClick={() => {
-                setDeepQuery(record.query);
-                setDeepOutput(record.result);
-              }}
-              type="button"
-            >
-              <History size={13} />
-              <span>{truncate(record.query, 44)}</span>
+          {activeChatStreamId || activeTaskId ? (
+            <button className="secondary" onClick={() => void stopActiveTurn()} title="Stop" type="button">
+              <Square size={15} />
             </button>
-          ))}
-        </div>
+          ) : null}
+        </form>
       </div>
     );
   }
 
-  function renderRecall() {
+  function renderSkills() {
     return (
-      <div className="panel-stack">
-        <textarea
-          aria-label="Recall text"
-          className="large-input"
-          onChange={(event) => setRecallDraft(event.target.value)}
-          placeholder="Recall item"
-          rows={3}
-          value={recallDraft}
-        />
-        <div className="button-row">
-          <button onClick={addRecall} type="button">
-            <Plus size={15} />
-            <span>Add</span>
-          </button>
-          <input
-            aria-label="Search Recall"
-            onChange={(event) => setRecallQuery(event.target.value)}
-            placeholder="Search"
-            value={recallQuery}
-          />
-        </div>
-        <div className="recall-list">
-          {visibleRecall.length === 0 ? <div className="empty-panel">Recall</div> : null}
-          {visibleRecall.map((item) => (
-            <div className={item.enabled ? "recall-item" : "recall-item muted"} key={item.id}>
-              <p>{truncate(item.text, 260)}</p>
-              <div>
-                <button onClick={() => void toggleRecall(item.id)} type="button">
-                  {item.enabled ? "On" : "Off"}
-                </button>
-                <button onClick={() => void deleteRecall(item.id)} type="button">
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  function renderTasks() {
-    const pendingApprovals = tasks.flatMap((task) =>
-      task.approvals.filter((approval) => approval.status === "pending").map((approval) => ({ task, approval }))
-    );
-
-    return (
-      <div className="panel-stack">
-        {pendingApprovals.length ? (
-          <div className="card-list">
-            {pendingApprovals.map(({ task, approval }) => (
-              <div className="task-card" key={approval.id}>
-                <strong>{approval.title}</strong>
-                <small>{task.objective}</small>
-                <p>{approval.detail}</p>
-                <div className="approval-actions">
-                  <button onClick={() => void approveAgentAction(task.id, approval.id)} type="button">
-                    Approve
-                  </button>
-                  <button onClick={() => void rejectAgentAction(task.id, approval.id)} type="button">
-                    Reject
-                  </button>
-                </div>
-              </div>
-            ))}
+      <div className="agent-view">
+        <div className="section-head">
+          <div>
+            <span className="eyebrow">Marketplace</span>
+            <strong>Local skills and remote sources</strong>
           </div>
-        ) : null}
-
-        <div className="card-list">
-          {tasks.length === 0 ? <div className="empty-panel">Tasks</div> : null}
-          {tasks.map((task) => (
-            <div className="task-card" key={task.id}>
-              <strong>{task.objective}</strong>
-              <small>
-                {task.status} - {task.steps.length} steps
-              </small>
-              {task.finalAnswer ? <p>{truncate(task.finalAnswer, 260)}</p> : null}
-              {task.error ? <p>{task.error}</p> : null}
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  function renderExtensions() {
-    return (
-      <div className="panel-stack">
-        <div className="button-row">
-          <button onClick={installExtension} type="button">
-            <Plus size={15} />
-            <span>Install</span>
-          </button>
-          <button onClick={() => void window.overthink.extensions.list().then(setExtensions)} type="button">
-            <RotateCcw size={15} />
+          <button disabled={busy === "skills"} onClick={() => void refreshSkills()} type="button">
+            {busy === "skills" ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
             <span>Refresh</span>
           </button>
         </div>
-        <div className="card-list">
-          {extensions.length === 0 ? <div className="empty-panel">Extensions</div> : null}
-          {extensions.map((extension) => (
-            <div className="task-card" key={extension.id}>
-              <strong>{extension.name}</strong>
-              <small>
-                {extension.version} - {extension.enabled ? "Enabled" : "Disabled"}
-              </small>
-              <p>{truncate(extension.path, 180)}</p>
-              {extension.warnings.map((warning) => (
-                <p key={warning}>{warning}</p>
-              ))}
-              <div className="approval-actions">
-                <button onClick={() => void setExtensionEnabled(extension.id, !extension.enabled)} type="button">
-                  {extension.enabled ? "Disable" : "Enable"}
-                </button>
-                <button onClick={() => void removeExtension(extension.id)} type="button">
-                  Remove
-                </button>
-              </div>
-            </div>
+
+        <div className="source-row">
+          <input
+            aria-label="Remote marketplace JSON URL"
+            onChange={(event) => setSourceUrl(event.target.value)}
+            placeholder="Remote marketplace JSON URL"
+            value={sourceUrl}
+          />
+          <button onClick={() => void addRemoteSource()} type="button">
+            <PackagePlus size={14} />
+          </button>
+        </div>
+
+        <div className="agent-search-row">
+          <Search size={14} />
+          <input onChange={(event) => setSkillQuery(event.target.value)} placeholder="Search skills" value={skillQuery} />
+        </div>
+
+        <div className="skill-source-strip">
+          {marketplace.sources.map((source) => (
+            <span className={source.error ? "source-pill error" : "source-pill"} key={source.id} title={source.error}>
+              {source.name}
+            </span>
           ))}
+        </div>
+
+        <div className="skill-list">
+          {visibleSkills.map((entry) => (
+            <article className="skill-card" key={`${entry.sourceId}-${entry.id}`}>
+              <div>
+                <strong>{entry.name}</strong>
+                <p>{entry.description}</p>
+              </div>
+              <div className="skill-meta">
+                <span>{entry.sourceName}</span>
+                <span>{entry.permissions.join(", ") || "no permissions"}</span>
+              </div>
+              <div className="skill-tags">
+                {entry.tags.slice(0, 4).map((tag) => (
+                  <span key={tag}>{tag}</span>
+                ))}
+              </div>
+              <div className="skill-actions">
+                {entry.installed ? (
+                  <>
+                    <button onClick={() => void setSkillEnabled(entry.id, !entry.enabled)} type="button">
+                      {entry.enabled ? "Disable" : "Enable"}
+                    </button>
+                    <button onClick={() => void removeSkill(entry.id)} title="Remove" type="button">
+                      <Trash2 size={14} />
+                    </button>
+                  </>
+                ) : (
+                  <button onClick={() => void installSkill(entry)} type="button">
+                    <PackagePlus size={14} />
+                    <span>Install</span>
+                  </button>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+
+        <div className="section-head compact">
+          <div>
+            <span className="eyebrow">Installed</span>
+            <strong>{installedSkills.length} skills</strong>
+          </div>
         </div>
       </div>
     );
   }
 
-  function renderModels() {
+  function renderSettings() {
     return (
-      <div className="panel-stack">
-        <div className="model-list">
+      <div className="agent-view settings-view">
+        <div className="section-head">
+          <div>
+            <span className="eyebrow">Models</span>
+            <strong>OpenAI-compatible provider</strong>
+          </div>
+          <button
+            onClick={() => {
+              setProviderDraft(blankProviderDraft());
+              setModelTest(null);
+            }}
+            type="button"
+          >
+            <Plus size={14} />
+            <span>New</span>
+          </button>
+        </div>
+
+        <div className="model-pill-row">
           {settings.providers.map((provider) => (
             <button
               className={provider.id === providerDraft.id ? "model-pill active" : "model-pill"}
@@ -1236,30 +1057,16 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
               <small>{provider.chatModel}</small>
             </button>
           ))}
-          <button
-            className="model-pill"
-            onClick={() => {
-              setProviderDraft(blankProviderDraft());
-              setModelTest(null);
-            }}
-            type="button"
-          >
-            <Plus size={14} />
-            <span>New provider</span>
-          </button>
         </div>
 
         <label className="field-label">
           <span>Name</span>
-          <input
-            onChange={(event) => setProviderDraft((draft) => ({ ...draft, name: event.target.value }))}
-            value={providerDraft.name}
-          />
+          <input onChange={(event) => setProviderDraft((item) => ({ ...item, name: event.target.value }))} value={providerDraft.name} />
         </label>
         <label className="field-label">
           <span>Base URL</span>
           <input
-            onChange={(event) => setProviderDraft((draft) => ({ ...draft, baseUrl: event.target.value }))}
+            onChange={(event) => setProviderDraft((item) => ({ ...item, baseUrl: event.target.value }))}
             placeholder="https://host/v1"
             value={providerDraft.baseUrl}
           />
@@ -1267,7 +1074,7 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
         <label className="field-label">
           <span>API Key</span>
           <input
-            onChange={(event) => setProviderDraft((draft) => ({ ...draft, apiKey: event.target.value }))}
+            onChange={(event) => setProviderDraft((item) => ({ ...item, apiKey: event.target.value }))}
             type="password"
             value={providerDraft.apiKey}
           />
@@ -1275,39 +1082,39 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
         <label className="field-label">
           <span>Chat Model</span>
           <input
-            onChange={(event) => setProviderDraft((draft) => ({ ...draft, chatModel: event.target.value }))}
+            onChange={(event) => setProviderDraft((item) => ({ ...item, chatModel: event.target.value }))}
             value={providerDraft.chatModel}
           />
         </label>
         <label className="field-label">
           <span>Vision Model</span>
           <input
-            onChange={(event) => setProviderDraft((draft) => ({ ...draft, visionModel: event.target.value }))}
+            onChange={(event) => setProviderDraft((item) => ({ ...item, visionModel: event.target.value }))}
             value={providerDraft.visionModel}
           />
         </label>
         <label className="toggle-label">
           <input
             checked={providerDraft.enabled}
-            onChange={(event) => setProviderDraft((draft) => ({ ...draft, enabled: event.target.checked }))}
+            onChange={(event) => setProviderDraft((item) => ({ ...item, enabled: event.target.checked }))}
             type="checkbox"
           />
           <span>Enabled</span>
         </label>
 
-        <div className="button-row">
-          <button onClick={saveModel} type="button">
-            <Save size={15} />
+        <div className="settings-actions">
+          <button onClick={() => void saveModel()} type="button">
+            <Save size={14} />
             <span>Save</span>
           </button>
           <button disabled={busy === "model"} onClick={() => void testModel("chat")} type="button">
-            Chat Test
+            Chat test
           </button>
           <button disabled={busy === "model" || !providerDraft.visionModel} onClick={() => void testModel("vision")} type="button">
-            Vision Test
+            Vision test
           </button>
           {settings.providers.some((provider) => provider.id === providerDraft.id) ? (
-            <button onClick={() => void deleteModel(providerDraft.id)} type="button">
+            <button onClick={() => void deleteModel(providerDraft.id)} title="Delete model" type="button">
               <Trash2 size={14} />
             </button>
           ) : null}
@@ -1321,8 +1128,23 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
           </div>
         ) : null}
 
-        <div className="section-divider">Search Providers</div>
-        <div className="model-list">
+        <div className="section-head compact">
+          <div>
+            <span className="eyebrow">Search</span>
+            <strong>Research provider</strong>
+          </div>
+          <button
+            onClick={() => {
+              setSearchProviderDraft(blankSearchProviderDraft());
+              setModelTest(null);
+            }}
+            type="button"
+          >
+            <Plus size={14} />
+            <span>New</span>
+          </button>
+        </div>
+        <div className="model-pill-row">
           {settings.searchProviders.map((provider) => (
             <button
               className={provider.id === searchProviderDraft.id ? "model-pill active" : "model-pill"}
@@ -1337,22 +1159,11 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
               <small>{provider.kind}</small>
             </button>
           ))}
-          <button
-            className="model-pill"
-            onClick={() => {
-              setSearchProviderDraft(blankSearchProviderDraft());
-              setModelTest(null);
-            }}
-            type="button"
-          >
-            <Plus size={14} />
-            <span>New search</span>
-          </button>
         </div>
         <label className="field-label">
           <span>Search Name</span>
           <input
-            onChange={(event) => setSearchProviderDraft((draft) => ({ ...draft, name: event.target.value }))}
+            onChange={(event) => setSearchProviderDraft((item) => ({ ...item, name: event.target.value }))}
             value={searchProviderDraft.name}
           />
         </label>
@@ -1360,8 +1171,8 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
           <span>Search Kind</span>
           <select
             onChange={(event) =>
-              setSearchProviderDraft((draft) => ({
-                ...draft,
+              setSearchProviderDraft((item) => ({
+                ...item,
                 kind: event.target.value as SearchProviderDraft["kind"]
               }))
             }
@@ -1376,7 +1187,7 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
         <label className="field-label">
           <span>Search Base URL</span>
           <input
-            onChange={(event) => setSearchProviderDraft((draft) => ({ ...draft, baseUrl: event.target.value }))}
+            onChange={(event) => setSearchProviderDraft((item) => ({ ...item, baseUrl: event.target.value }))}
             placeholder="https://api.search.example/search"
             value={searchProviderDraft.baseUrl}
           />
@@ -1384,7 +1195,7 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
         <label className="field-label">
           <span>Search API Key</span>
           <input
-            onChange={(event) => setSearchProviderDraft((draft) => ({ ...draft, apiKey: event.target.value }))}
+            onChange={(event) => setSearchProviderDraft((item) => ({ ...item, apiKey: event.target.value }))}
             type="password"
             value={searchProviderDraft.apiKey}
           />
@@ -1392,48 +1203,100 @@ export function OverthinkSidePanel({ activeTab }: OverthinkSidePanelProps) {
         <label className="toggle-label">
           <input
             checked={searchProviderDraft.enabled}
-            onChange={(event) => setSearchProviderDraft((draft) => ({ ...draft, enabled: event.target.checked }))}
+            onChange={(event) => setSearchProviderDraft((item) => ({ ...item, enabled: event.target.checked }))}
             type="checkbox"
           />
           <span>Enabled</span>
         </label>
-        <div className="button-row">
-          <button onClick={saveSearchProvider} type="button">
-            <Save size={15} />
-            <span>Save Search</span>
+        <div className="settings-actions">
+          <button onClick={() => void saveSearchProvider()} type="button">
+            <Save size={14} />
+            <span>Save search</span>
           </button>
           {settings.searchProviders.some((provider) => provider.id === searchProviderDraft.id) ? (
-            <button onClick={() => void deleteSearchProvider(searchProviderDraft.id)} type="button">
+            <button onClick={() => void deleteSearchProvider(searchProviderDraft.id)} title="Delete search provider" type="button">
               <Trash2 size={14} />
             </button>
           ) : null}
+        </div>
+
+        <div className="section-head compact">
+          <div>
+            <span className="eyebrow">Recall</span>
+            <strong>Local memory</strong>
+          </div>
+        </div>
+        <textarea
+          className="compact-textarea"
+          onChange={(event) => setRecallDraft(event.target.value)}
+          placeholder="Add a local memory for the agent"
+          rows={2}
+          value={recallDraft}
+        />
+        <div className="source-row">
+          <button onClick={() => void addRecall()} type="button">
+            <Plus size={14} />
+            <span>Add recall</span>
+          </button>
+          <input onChange={(event) => setRecallQuery(event.target.value)} placeholder="Filter recall" value={recallQuery} />
+        </div>
+        <div className="recall-list compact-list">
+          {visibleRecall.slice(0, 12).map((item) => (
+            <div className={item.enabled ? "recall-card" : "recall-card muted"} key={item.id}>
+              <p>{truncate(item.text, 180)}</p>
+              <div>
+                <button onClick={() => void toggleRecall(item.id)} type="button">
+                  {item.enabled ? "On" : "Off"}
+                </button>
+                <button onClick={() => void deleteRecall(item.id)} type="button">
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="section-head compact">
+          <div>
+            <span className="eyebrow">Data</span>
+            <strong>Import and export</strong>
+          </div>
+        </div>
+        <div className="settings-actions">
+          <button onClick={() => void importData()} type="button">
+            <Upload size={14} />
+            <span>Import</span>
+          </button>
+          <button onClick={() => void exportData()} type="button">
+            <Download size={14} />
+            <span>Export</span>
+          </button>
+          <span className="data-stat">
+            <Database size={14} />
+            {sessions.length} chats, {installedSkills.length} skills
+          </span>
         </div>
       </div>
     );
   }
 
-  function renderData() {
-    return (
-      <div className="panel-stack">
-        <div className="data-grid">
-          <button onClick={importData} type="button">
-            <Upload size={16} />
-            <span>Import</span>
-          </button>
-          <button onClick={exportData} type="button">
-            <Download size={16} />
-            <span>Export</span>
-          </button>
-        </div>
-        <div className="data-stats">
-          <span>Models {settings.providers.length}</span>
-          <span>Chats {sessions.length}</span>
-          <span>Recall {recallItems.length}</span>
-          <span>Deep Dive {deepHistory.length}</span>
-          <span>Tasks {tasks.length}</span>
-          <span>Extensions {extensions.length}</span>
-        </div>
-      </div>
-    );
-  }
+  return (
+    <div className="agent-panel">
+      <nav className="agent-nav" aria-label="Overthink sections">
+        {NAV_ITEMS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => setView(item.id)} type="button">
+              <Icon size={15} />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+      {renderStatus()}
+      {view === "agent" ? renderAgent() : null}
+      {view === "skills" ? renderSkills() : null}
+      {view === "settings" ? renderSettings() : null}
+    </div>
+  );
 }

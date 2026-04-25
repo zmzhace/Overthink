@@ -329,6 +329,68 @@ export interface ExtensionInstallRequest {
   path?: string;
 }
 
+export type SkillPermission = "page" | "browser" | "network" | "files" | "clipboard" | "shell" | "storage";
+
+export type SkillSourceKind = "builtin" | "remote" | "local";
+
+export interface SkillManifest {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author?: string;
+  homepage?: string;
+  tags: string[];
+  permissions: SkillPermission[];
+  triggers: string[];
+  prompt: string;
+  tools: ToolCallName[];
+}
+
+export interface SkillMarketplaceSource {
+  id: string;
+  name: string;
+  kind: SkillSourceKind;
+  url?: string;
+  enabled: boolean;
+  lastRefreshedAt?: string;
+  error?: string;
+}
+
+export interface SkillMarketplaceEntry extends SkillManifest {
+  sourceId: string;
+  sourceName: string;
+  sourceKind: SkillSourceKind;
+  installed: boolean;
+  enabled: boolean;
+}
+
+export interface SkillMarketplaceState {
+  sources: SkillMarketplaceSource[];
+  entries: SkillMarketplaceEntry[];
+}
+
+export interface SkillRecord {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  sourceId: string;
+  sourceName: string;
+  sourceKind: SkillSourceKind;
+  manifest: SkillManifest;
+  enabled: boolean;
+  installedAt: string;
+  updatedAt: string;
+  syncState: "local" | "pending" | "synced";
+}
+
+export interface SkillInstallRequest {
+  skillId?: string;
+  sourceId?: string;
+  manifest?: SkillManifest;
+}
+
 export interface ImportExportPayload {
   schemaVersion: 1 | 2;
   exportedAt: string;
@@ -338,6 +400,8 @@ export interface ImportExportPayload {
   deepDiveHistory?: DeepDiveRecord[];
   tasks?: OverthinkTask[];
   extensions?: ExtensionRecord[];
+  skills?: SkillRecord[];
+  skillSources?: SkillMarketplaceSource[];
   syncState?: "local" | "pending" | "synced";
 }
 
@@ -349,5 +413,6 @@ export interface ImportSummary {
   deepDives: number;
   tasks: number;
   extensions: number;
+  skills: number;
   message: string;
 }

@@ -8,6 +8,7 @@ import { OverthinkDocumentExtractor } from "./overthink-document-extractor";
 import { OverthinkExtensionService } from "./overthink-extension-service";
 import { OverthinkModelService } from "./overthink-model-service";
 import { OverthinkResearchRuntime } from "./overthink-research-runtime";
+import { OverthinkSkillService } from "./overthink-skill-service";
 import type { OverthinkStorage } from "./overthink-storage";
 import type { OverthinkTabs } from "./overthink-tabs";
 
@@ -24,6 +25,7 @@ export function registerIpcHandlers({ mainWindow, tabs, storage }: RegisterIpcHa
   const agentRuntime = new OverthinkAgentRuntime(tabs, storage, modelService);
   const researchRuntime = new OverthinkResearchRuntime(tabs, storage, modelService);
   const extensionService = new OverthinkExtensionService(mainWindow, storage);
+  const skillService = new OverthinkSkillService(storage);
 
   void extensionService.loadEnabledExtensions();
 
@@ -90,6 +92,15 @@ export function registerIpcHandlers({ mainWindow, tabs, storage }: RegisterIpcHa
     extensionService.setEnabled(extensionId, enabled)
   );
   ipcMain.handle(IPC_CHANNELS.extensionsRemove, (_event, extensionId: string) => extensionService.remove(extensionId));
+  ipcMain.handle(IPC_CHANNELS.skillsListMarketplace, () => skillService.listMarketplace());
+  ipcMain.handle(IPC_CHANNELS.skillsListInstalled, () => skillService.listInstalled());
+  ipcMain.handle(IPC_CHANNELS.skillsInstall, (_event, request) => skillService.install(request));
+  ipcMain.handle(IPC_CHANNELS.skillsSetEnabled, (_event, skillId: string, enabled: boolean) =>
+    skillService.setEnabled(skillId, enabled)
+  );
+  ipcMain.handle(IPC_CHANNELS.skillsRemove, (_event, skillId: string) => skillService.remove(skillId));
+  ipcMain.handle(IPC_CHANNELS.skillsRefreshSources, () => skillService.refreshSources());
+  ipcMain.handle(IPC_CHANNELS.skillsSaveSources, (_event, sources) => skillService.saveMarketplaceSources(sources));
   ipcMain.handle(IPC_CHANNELS.dataExport, () => dataService.exportAll());
   ipcMain.handle(IPC_CHANNELS.dataImport, () => dataService.importAll());
 }

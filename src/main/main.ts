@@ -30,6 +30,10 @@ function registerAppProtocol(): void {
   protocol.handle(OVERTHINK_SCHEME, (request) => {
     const url = new URL(request.url);
 
+    if (url.hostname === "agent") {
+      return new Response("", { status: 204 });
+    }
+
     if (url.hostname !== "home") {
       return new Response("Not found", { status: 404 });
     }

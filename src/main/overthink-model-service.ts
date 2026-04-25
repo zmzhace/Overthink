@@ -11,13 +11,15 @@ import type {
   ModelTestRequest,
   ModelTestResult,
   RecallItem,
-  SearchProviderConfig
+  SearchProviderConfig,
+  SkillRecord
 } from "@/shared/overthink";
 
 import type { OverthinkStorage } from "./overthink-storage";
 
 const SETTINGS_KEY = "modelSettings";
 const RECALL_KEY = "recallItems";
+const SKILLS_KEY = "skills";
 
 const emptySettings = (): ModelSettingsState => ({
   providers: [],
@@ -417,6 +419,27 @@ export class OverthinkModelService {
       });
     }
 
+    const enabledSkills = this.getEnabledSkills();
+    if (enabledSkills.length) {
+      messages.push({
+        role: "system",
+        content: [
+          "Enabled Overthink skills. Use these as capability guidance when relevant; do not claim a skill executed unless a tool actually ran.",
+          ...enabledSkills.map((skill) =>
+            [
+              `Skill: ${skill.name} (${skill.version})`,
+              `Description: ${skill.description}`,
+              skill.manifest.triggers.length ? `Triggers: ${skill.manifest.triggers.join(" | ")}` : "",
+              skill.manifest.tools.length ? `Tools: ${skill.manifest.tools.join(", ")}` : "",
+              skill.manifest.prompt ? `Instruction: ${skill.manifest.prompt}` : ""
+            ]
+              .filter(Boolean)
+              .join("\n")
+          )
+        ].join("\n\n")
+      });
+    }
+
     const recallQuery = [
       request.messages.at(-1)?.content ?? "",
       context?.pageBrief?.title ?? "",
@@ -463,6 +486,13 @@ export class OverthinkModelService {
 
   private resolveProvider(settings: ModelSettingsState, providerId?: string | null): ModelProviderConfig | null {
     return settings.providers.find((provider) => provider.id === providerId && provider.enabled) ?? null;
+  }
+
+  private getEnabledSkills(): SkillRecord[] {
+    const storedValues = this.storage.get("local", SKILLS_KEY) as { skills?: SkillRecord[] };
+    return Array.isArray(storedValues.skills)
+      ? storedValues.skills.filter((skill) => skill.enabled && skill.manifest?.prompt).slice(0, 12)
+      : [];
   }
 
   private normalizeProvider(provider: ModelProviderConfig): ModelProviderConfig {

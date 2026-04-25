@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 import type { OverthinkBridge } from "@/shared/bridge";
 import { IPC_CHANNELS } from "@/shared/ipc";
-import type { TabsSnapshot } from "@/shared/ipc";
+import type { HomeAgentPromptEvent, TabsSnapshot } from "@/shared/ipc";
 import type { AgentStepEvent, ChatStreamEvent, ResearchEvent } from "@/shared/overthink";
 
 const bridge: OverthinkBridge = {
@@ -94,9 +94,25 @@ const bridge: OverthinkBridge = {
     setEnabled: (extensionId, enabled) => ipcRenderer.invoke(IPC_CHANNELS.extensionsSetEnabled, extensionId, enabled),
     remove: (extensionId) => ipcRenderer.invoke(IPC_CHANNELS.extensionsRemove, extensionId)
   },
+  skills: {
+    listMarketplace: () => ipcRenderer.invoke(IPC_CHANNELS.skillsListMarketplace),
+    listInstalled: () => ipcRenderer.invoke(IPC_CHANNELS.skillsListInstalled),
+    install: (request) => ipcRenderer.invoke(IPC_CHANNELS.skillsInstall, request),
+    setEnabled: (skillId, enabled) => ipcRenderer.invoke(IPC_CHANNELS.skillsSetEnabled, skillId, enabled),
+    remove: (skillId) => ipcRenderer.invoke(IPC_CHANNELS.skillsRemove, skillId),
+    refreshSources: () => ipcRenderer.invoke(IPC_CHANNELS.skillsRefreshSources),
+    saveSources: (sources) => ipcRenderer.invoke(IPC_CHANNELS.skillsSaveSources, sources)
+  },
   data: {
     exportAll: () => ipcRenderer.invoke(IPC_CHANNELS.dataExport),
     importAll: () => ipcRenderer.invoke(IPC_CHANNELS.dataImport)
+  },
+  home: {
+    onAgentPrompt: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, promptEvent: HomeAgentPromptEvent) => callback(promptEvent);
+      ipcRenderer.on(IPC_CHANNELS.homeAgentPrompt, listener);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.homeAgentPrompt, listener);
+    }
   }
 };
 

@@ -11,6 +11,7 @@ export const IPC_CHANNELS = {
   tabsGoForward: "overthink:tabs:go-forward",
   tabsReload: "overthink:tabs:reload",
   tabsHome: "overthink:tabs:home",
+  homeAgentPrompt: "overthink:home:agent-prompt",
   browserSetBounds: "overthink:browser:set-bounds",
   browserCaptureActiveTab: "overthink:browser:capture-active-tab",
   browserExecuteJavaScript: "overthink:browser:execute-javascript",
@@ -47,6 +48,13 @@ export const IPC_CHANNELS = {
   extensionsList: "overthink:extensions:list",
   extensionsSetEnabled: "overthink:extensions:set-enabled",
   extensionsRemove: "overthink:extensions:remove",
+  skillsListMarketplace: "overthink:skills:list-marketplace",
+  skillsListInstalled: "overthink:skills:list-installed",
+  skillsInstall: "overthink:skills:install",
+  skillsSetEnabled: "overthink:skills:set-enabled",
+  skillsRemove: "overthink:skills:remove",
+  skillsRefreshSources: "overthink:skills:refresh-sources",
+  skillsSaveSources: "overthink:skills:save-sources",
   dataExport: "overthink:data:export",
   dataImport: "overthink:data:import"
 } as const;
@@ -69,6 +77,11 @@ export interface TabsSnapshot {
 }
 
 export type BrowserBounds = Pick<Rectangle, "x" | "y" | "width" | "height">;
+
+export interface HomeAgentPromptEvent {
+  tabId: number;
+  prompt: string;
+}
 
 export interface DebuggerCommandRequest {
   tabId?: number;

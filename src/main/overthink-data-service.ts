@@ -12,6 +12,8 @@ import type {
   OverthinkTask,
   RecallItem,
   SearchProviderConfig,
+  SkillMarketplaceSource,
+  SkillRecord,
   ThinkChatSession,
   ThinkMessage
 } from "@/shared/overthink";
@@ -24,6 +26,8 @@ const RECALL_KEY = "recallItems";
 const DEEP_DIVE_KEY = "deepDiveHistory";
 const TASKS_KEY = "overthinkTasks";
 const EXTENSIONS_KEY = "extensions";
+const SKILLS_KEY = "skills";
+const SKILL_SOURCES_KEY = "skillMarketplaceSources";
 
 export class OverthinkDataService {
   constructor(
@@ -42,6 +46,8 @@ export class OverthinkDataService {
       deepDiveHistory: this.coerceDeepDive(local[DEEP_DIVE_KEY]),
       tasks: this.coerceTasks(local[TASKS_KEY]),
       extensions: this.coerceExtensions(local[EXTENSIONS_KEY]),
+      skills: this.coerceSkills(local[SKILLS_KEY]),
+      skillSources: this.coerceSkillSources(local[SKILL_SOURCES_KEY]),
       syncState: "local"
     };
 
@@ -75,6 +81,7 @@ export class OverthinkDataService {
         deepDives: 0,
         tasks: 0,
         extensions: 0,
+        skills: 0,
         message: "Import canceled."
       };
     }
@@ -89,6 +96,8 @@ export class OverthinkDataService {
       deepDiveHistory: this.coerceDeepDive(raw.deepDiveHistory ?? raw.researchHistory ?? raw.deepDives),
       tasks: this.coerceTasks(raw.tasks ?? raw.overthinkTasks),
       extensions: this.coerceExtensions(raw.extensions),
+      skills: this.coerceSkills(raw.skills),
+      skillSources: this.coerceSkillSources(raw.skillSources),
       syncState: "local"
     };
 
@@ -98,7 +107,9 @@ export class OverthinkDataService {
       [RECALL_KEY]: payload.recallItems,
       [DEEP_DIVE_KEY]: payload.deepDiveHistory ?? [],
       [TASKS_KEY]: payload.tasks ?? [],
-      [EXTENSIONS_KEY]: payload.extensions ?? []
+      [EXTENSIONS_KEY]: payload.extensions ?? [],
+      [SKILLS_KEY]: payload.skills ?? [],
+      [SKILL_SOURCES_KEY]: payload.skillSources ?? []
     });
 
     return this.summary(true, payload, "Import complete.");
@@ -335,6 +346,108 @@ export class OverthinkDataService {
     });
   }
 
+  private coerceSkills(value: unknown): SkillRecord[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.flatMap((item) => {
+      if (!item || typeof item !== "object") {
+        return [];
+      }
+
+      const record = item as Record<string, unknown>;
+      const manifestRecord =
+        record.manifest && typeof record.manifest === "object" ? (record.manifest as Record<string, unknown>) : record;
+      const id = this.stringValue(record.id ?? manifestRecord.id);
+      const name = this.stringValue(record.name ?? manifestRecord.name);
+      if (!id || !name) {
+        return [];
+      }
+
+      const now = new Date().toISOString();
+      const manifest = {
+        id,
+        name,
+        version: this.stringValue(record.version ?? manifestRecord.version) || "0.1.0",
+        description: this.stringValue(record.description ?? manifestRecord.description),
+        author: this.stringValue(manifestRecord.author) || undefined,
+        homepage: this.stringValue(manifestRecord.homepage) || undefined,
+        tags: this.stringArray(manifestRecord.tags),
+        permissions: this.stringArray(manifestRecord.permissions).filter((permission) =>
+          ["page", "browser", "network", "files", "clipboard", "shell", "storage"].includes(permission)
+        ) as SkillRecord["manifest"]["permissions"],
+        triggers: this.stringArray(manifestRecord.triggers),
+        prompt: this.stringValue(manifestRecord.prompt),
+        tools: this.stringArray(manifestRecord.tools).filter((tool) =>
+          [
+            "read_page",
+            "capture_screenshot",
+            "search_web",
+            "open_url",
+            "extract_links",
+            "click",
+            "type",
+            "scroll",
+            "press_key",
+            "wait_for_page",
+            "attach_document",
+            "recall_search"
+          ].includes(tool)
+        ) as SkillRecord["manifest"]["tools"]
+      };
+
+      return [
+        {
+          id,
+          name,
+          version: manifest.version,
+          description: manifest.description,
+          sourceId: this.stringValue(record.sourceId) || "import",
+          sourceName: this.stringValue(record.sourceName) || "Imported",
+          sourceKind: "local",
+          manifest,
+          enabled: typeof record.enabled === "boolean" ? record.enabled : true,
+          installedAt: this.stringValue(record.installedAt) || now,
+          updatedAt: now,
+          syncState: "local"
+        }
+      ];
+    });
+  }
+
+  private coerceSkillSources(value: unknown): SkillMarketplaceSource[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.flatMap((item) => {
+      if (!item || typeof item !== "object") {
+        return [];
+      }
+
+      const record = item as Record<string, unknown>;
+      const id = this.stringValue(record.id);
+      const name = this.stringValue(record.name);
+      if (!id || !name) {
+        return [];
+      }
+
+      const kind = this.stringValue(record.kind);
+      return [
+        {
+          id,
+          name,
+          kind: kind === "remote" || kind === "local" ? kind : "builtin",
+          url: this.stringValue(record.url) || undefined,
+          enabled: typeof record.enabled === "boolean" ? record.enabled : true,
+          lastRefreshedAt: this.stringValue(record.lastRefreshedAt) || undefined,
+          error: this.stringValue(record.error) || undefined
+        }
+      ];
+    });
+  }
+
   private coerceMessages(value: unknown): ThinkMessage[] {
     if (!Array.isArray(value)) {
       return [];
@@ -401,11 +514,16 @@ export class OverthinkDataService {
       deepDives: payload.deepDiveHistory?.length ?? 0,
       tasks: payload.tasks?.length ?? 0,
       extensions: payload.extensions?.length ?? 0,
+      skills: payload.skills?.length ?? 0,
       message
     };
   }
 
   private stringValue(value: unknown): string {
     return typeof value === "string" ? value.trim() : "";
+  }
+
+  private stringArray(value: unknown): string[] {
+    return Array.isArray(value) ? value.flatMap((item) => (typeof item === "string" ? [item.trim()] : [])).filter(Boolean) : [];
   }
 }

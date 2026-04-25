@@ -2,6 +2,7 @@ import type {
   BrowserBounds,
   DebuggerCommandRequest,
   ExecuteJavaScriptRequest,
+  HomeAgentPromptEvent,
   StorageArea,
   TabsSnapshot
 } from "./ipc";
@@ -26,7 +27,11 @@ import type {
   RecallItem,
   RecallSearchRequest,
   ResearchEvent,
-  ResearchRequest
+  ResearchRequest,
+  SkillInstallRequest,
+  SkillMarketplaceSource,
+  SkillMarketplaceState,
+  SkillRecord
 } from "./overthink";
 
 export interface OverthinkBridge {
@@ -102,9 +107,21 @@ export interface OverthinkBridge {
     setEnabled: (extensionId: string, enabled: boolean) => Promise<ExtensionRecord[]>;
     remove: (extensionId: string) => Promise<ExtensionRecord[]>;
   };
+  skills: {
+    listMarketplace: () => Promise<SkillMarketplaceState>;
+    listInstalled: () => Promise<SkillRecord[]>;
+    install: (request: SkillInstallRequest) => Promise<SkillRecord>;
+    setEnabled: (skillId: string, enabled: boolean) => Promise<SkillRecord[]>;
+    remove: (skillId: string) => Promise<SkillRecord[]>;
+    refreshSources: () => Promise<SkillMarketplaceState>;
+    saveSources: (sources: SkillMarketplaceSource[]) => Promise<SkillMarketplaceState>;
+  };
   data: {
     exportAll: () => Promise<ImportSummary>;
     importAll: () => Promise<ImportSummary>;
+  };
+  home: {
+    onAgentPrompt: (callback: (event: HomeAgentPromptEvent) => void) => () => void;
   };
 }
 

@@ -13,7 +13,7 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { APP_NAME } from "@/shared/branding";
-import type { BrowserTabState, TabsSnapshot } from "@/shared/ipc";
+import type { BrowserTabState, HomeAgentPromptEvent, TabsSnapshot } from "@/shared/ipc";
 
 import { OverthinkSidePanel } from "../sidepanel/OverthinkSidePanel";
 
@@ -28,6 +28,7 @@ export function BrowserShell() {
   const [snapshot, setSnapshot] = useState<TabsSnapshot>(emptySnapshot);
   const [addressValue, setAddressValue] = useState("");
   const [sidePanelOpen, setSidePanelOpen] = useState(true);
+  const [agentPrompt, setAgentPrompt] = useState<{ id: string; prompt: string; tabId: number } | null>(null);
 
   const activeTab = useMemo(
     () => snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null,
@@ -64,6 +65,17 @@ export function BrowserShell() {
       disposed = true;
       unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    return window.overthink.home.onAgentPrompt((event: HomeAgentPromptEvent) => {
+      setSidePanelOpen(true);
+      setAgentPrompt({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        prompt: event.prompt,
+        tabId: event.tabId
+      });
+    });
   }, []);
 
   useEffect(() => {
@@ -154,16 +166,16 @@ export function BrowserShell() {
               title={tab.title || tab.url}
             >
               {tab.favicon ? <img alt="" className="tab-favicon" src={tab.favicon} /> : <span className="tab-dot" />}
-              <span className="tab-title">{tab.title || tab.url || "新标签页"}</span>
+              <span className="tab-title">{tab.title || tab.url || "New tab"}</span>
               <span className={tab.isLoading ? "tab-loading active" : "tab-loading"} />
               <button
-                aria-label="关闭标签页"
+                aria-label="Close tab"
                 className="tab-close"
                 onClick={(event) => {
                   event.stopPropagation();
                   void window.overthink.tabs.close(tab.id);
                 }}
-                title="关闭"
+                title="Close"
                 type="button"
               >
                 <X size={14} />
@@ -171,10 +183,10 @@ export function BrowserShell() {
             </div>
           ))}
           <button
-            aria-label="新建标签页"
+            aria-label="New tab"
             className="icon-button new-tab-button"
             onClick={() => void window.overthink.tabs.create()}
-            title="新建标签页"
+            title="New tab"
             type="button"
           >
             <Plus size={16} />
@@ -184,39 +196,39 @@ export function BrowserShell() {
 
       <div className="toolbar">
         <button
-          aria-label="后退"
+          aria-label="Back"
           className="icon-button"
           disabled={!activeTab?.canGoBack}
           onClick={() => runTabCommand((tab) => window.overthink.tabs.goBack(tab.id))}
-          title="后退"
+          title="Back"
           type="button"
         >
           <ArrowLeft size={17} />
         </button>
         <button
-          aria-label="前进"
+          aria-label="Forward"
           className="icon-button"
           disabled={!activeTab?.canGoForward}
           onClick={() => runTabCommand((tab) => window.overthink.tabs.goForward(tab.id))}
-          title="前进"
+          title="Forward"
           type="button"
         >
           <ArrowRight size={17} />
         </button>
         <button
-          aria-label="刷新"
+          aria-label="Reload"
           className="icon-button"
           onClick={() => runTabCommand((tab) => window.overthink.tabs.reload(tab.id))}
-          title="刷新"
+          title="Reload"
           type="button"
         >
           <RefreshCw size={16} />
         </button>
         <button
-          aria-label="主页"
+          aria-label="Home"
           className="icon-button"
           onClick={() => runTabCommand((tab) => window.overthink.tabs.home(tab.id))}
-          title="主页"
+          title="Home"
           type="button"
         >
           <Home size={16} />
@@ -225,10 +237,10 @@ export function BrowserShell() {
         <form className="address-form" onSubmit={navigateActiveTab}>
           <Search className="address-icon" size={16} />
           <input
-            aria-label="地址栏"
+            aria-label="Address bar"
             className="address-input"
             onChange={(event) => setAddressValue(event.target.value)}
-            placeholder="搜索或输入网址"
+            placeholder="Search or enter address"
             ref={addressInputRef}
             spellCheck={false}
             value={addressValue}
@@ -259,16 +271,16 @@ export function BrowserShell() {
                 <span>{APP_NAME}</span>
               </div>
               <button
-                aria-label="设置"
+                aria-label="Settings"
                 className="icon-button"
-                onClick={() => window.dispatchEvent(new CustomEvent("overthink:open-section", { detail: "models" }))}
-                title="设置"
+                onClick={() => window.dispatchEvent(new CustomEvent("overthink:open-section", { detail: "settings" }))}
+                title="Settings"
                 type="button"
               >
                 <Settings size={16} />
               </button>
             </div>
-            <OverthinkSidePanel activeTab={activeTab} />
+            <OverthinkSidePanel activeTab={activeTab} agentPrompt={agentPrompt} />
           </aside>
         ) : null}
       </main>

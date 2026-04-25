@@ -1,31 +1,47 @@
 import { APP_NAME, APP_TAGLINE } from "@/shared/branding";
 
 const quickLinks = [
-  { label: "Bing", href: "https://www.bing.com/" },
   { label: "GitHub", href: "https://github.com/" },
-  { label: "Wikipedia", href: "https://www.wikipedia.org/" },
-  { label: "Perplexity", href: "https://www.perplexity.ai/" }
+  { label: "OpenAI", href: "https://openai.com/" },
+  { label: "Perplexity", href: "https://www.perplexity.ai/" },
+  { label: "Wikipedia", href: "https://www.wikipedia.org/" }
 ];
 
-const prompts = ["What is actually being claimed?", "Where does the evidence start?", "What would change my mind?"];
+const agentPrompts = [
+  "Summarize this page after I open it",
+  "Research the latest context for this topic",
+  "Compare the key claims and sources"
+];
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
 export function renderHomePage(): string {
   const quickLinkMarkup = quickLinks
-    .map((link) => `<a class="quick-link" href="${link.href}">${link.label}</a>`)
+    .map((link) => `<a class="quick-link" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`)
     .join("");
-  const promptMarkup = prompts.map((prompt) => `<span class="prompt-chip">${prompt}</span>`).join("");
+  const promptMarkup = agentPrompts
+    .map((prompt) => `<a class="prompt-chip" href="overthink://agent/?prompt=${encodeURIComponent(prompt)}">${escapeHtml(prompt)}</a>`)
+    .join("");
 
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${APP_NAME}</title>
+    <title>${escapeHtml(APP_NAME)}</title>
     <style>
       :root {
-        color: #191c20;
-        background: #f4f1ea;
+        color: #171a1f;
+        background: #f7f8fa;
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
       }
 
       * {
@@ -36,152 +52,275 @@ export function renderHomePage(): string {
         min-height: 100vh;
         margin: 0;
         background:
-          linear-gradient(90deg, rgba(25, 28, 32, 0.05) 1px, transparent 1px),
-          linear-gradient(rgba(25, 28, 32, 0.05) 1px, transparent 1px),
-          #f4f1ea;
-        background-size: 42px 42px;
+          radial-gradient(circle at top left, rgba(47, 158, 143, 0.11), transparent 32rem),
+          linear-gradient(180deg, #ffffff 0%, #f7f8fa 48%, #f1f3f6 100%);
       }
 
       main {
         display: grid;
         align-content: center;
-        width: min(920px, calc(100vw - 48px));
+        width: min(880px, calc(100vw - 48px));
         min-height: 100vh;
         margin: 0 auto;
-        padding: 56px 0;
+        padding: 48px 0 64px;
       }
 
       .brand {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 28px;
+      }
+
+      .brand-row {
         display: flex;
         align-items: center;
-        gap: 14px;
-        margin-bottom: 34px;
+        gap: 12px;
       }
 
       .mark {
         display: grid;
         place-items: center;
-        width: 46px;
-        height: 46px;
-        border: 2px solid #191c20;
+        width: 38px;
+        height: 38px;
+        border: 1px solid #d6dde7;
         border-radius: 8px;
-        background: #ffcc4d;
-        box-shadow: 6px 6px 0 #191c20;
-        font-size: 24px;
+        background: #ffffff;
+        color: #0f766e;
+        font-size: 18px;
         font-weight: 800;
       }
 
       h1 {
         margin: 0;
-        color: #111318;
-        font-size: clamp(48px, 8vw, 92px);
-        line-height: 0.95;
+        color: #101418;
+        font-size: 34px;
+        line-height: 1;
         letter-spacing: 0;
       }
 
       .tagline {
-        margin: 8px 0 0;
-        color: #525962;
-        font-size: 18px;
+        max-width: 620px;
+        margin: 0;
+        color: #5d6673;
+        font-size: 15px;
+        line-height: 1.55;
       }
 
-      form {
+      .ask-panel {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 116px;
-        gap: 10px;
-        margin-bottom: 22px;
-      }
-
-      input,
-      button {
-        height: 54px;
-        border: 2px solid #191c20;
+        gap: 12px;
+        margin-bottom: 20px;
+        padding: 12px;
+        border: 1px solid #dfe5ee;
         border-radius: 8px;
-        font: inherit;
+        background: rgba(255, 255, 255, 0.88);
+        box-shadow: 0 18px 45px rgba(18, 25, 33, 0.08);
       }
 
-      input {
-        min-width: 0;
-        padding: 0 18px;
-        background: #fffdf8;
-        color: #111318;
-        font-size: 17px;
+      textarea {
+        width: 100%;
+        min-height: 118px;
+        resize: vertical;
+        padding: 16px;
+        border: 0;
+        border-radius: 8px;
         outline: none;
+        background: #ffffff;
+        color: #14181f;
+        font: inherit;
+        font-size: 18px;
+        line-height: 1.45;
       }
 
-      input:focus {
-        box-shadow: 0 0 0 4px rgba(47, 158, 143, 0.22);
+      textarea::placeholder {
+        color: #8a94a3;
+      }
+
+      .action-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .hint {
+        overflow: hidden;
+        color: #778190;
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .buttons {
+        display: flex;
+        gap: 8px;
+        flex: none;
       }
 
       button {
-        background: #2f9e8f;
-        color: #ffffff;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 36px;
+        padding: 0 14px;
+        border: 1px solid #d6dde7;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #202832;
         cursor: pointer;
-        font-weight: 750;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      button.primary {
+        border-color: #111827;
+        background: #111827;
+        color: #ffffff;
+      }
+
+      button:hover {
+        border-color: #9ba7b7;
       }
 
       .quick-links,
       .prompt-row {
         display: flex;
         flex-wrap: wrap;
-        gap: 10px;
+        gap: 8px;
       }
 
       .quick-links {
-        margin-bottom: 28px;
+        margin-bottom: 18px;
       }
 
       .quick-link,
       .prompt-chip {
-        border: 1px solid rgba(25, 28, 32, 0.18);
+        max-width: 100%;
+        overflow: hidden;
+        padding: 9px 11px;
+        border: 1px solid #dfe5ee;
         border-radius: 8px;
-        background: rgba(255, 253, 248, 0.82);
-        color: #30363d;
-      }
-
-      .quick-link {
-        padding: 10px 13px;
+        background: rgba(255, 255, 255, 0.76);
+        color: #354052;
+        font-size: 13px;
         text-decoration: none;
-      }
-
-      .quick-link:hover {
-        border-color: #191c20;
-        color: #111318;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .prompt-chip {
-        padding: 9px 12px;
-        color: #5b616a;
-        font-size: 13px;
+        color: #506070;
+      }
+
+      .quick-link:hover,
+      .prompt-chip:hover {
+        border-color: #aab5c4;
+        background: #ffffff;
+        color: #101418;
       }
 
       @media (max-width: 640px) {
         main {
-          width: min(100vw - 28px, 920px);
+          width: min(100vw - 28px, 880px);
+          padding-top: 36px;
         }
 
-        form {
-          grid-template-columns: minmax(0, 1fr);
+        .action-row {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .buttons {
+          width: 100%;
+        }
+
+        button {
+          flex: 1;
         }
       }
     </style>
   </head>
   <body>
     <main>
-      <section class="brand" aria-label="${APP_NAME}">
-        <div class="mark">O</div>
-        <div>
-          <h1>${APP_NAME}</h1>
-          <p class="tagline">${APP_TAGLINE}</p>
+      <section class="brand" aria-label="${escapeHtml(APP_NAME)}">
+        <div class="brand-row">
+          <div class="mark">O</div>
+          <h1>${escapeHtml(APP_NAME)}</h1>
         </div>
+        <p class="tagline">${escapeHtml(APP_TAGLINE)}. Ask an agent, search the web, or open a URL from the same place.</p>
       </section>
-      <form action="https://www.bing.com/search" method="get">
-        <input name="q" autocomplete="off" autofocus placeholder="What are you trying to understand?" />
-        <button type="submit">Search</button>
+
+      <form class="ask-panel" id="ask-form">
+        <textarea id="ask-input" autocomplete="off" autofocus placeholder="Ask Overthink, search, or paste a URL"></textarea>
+        <div class="action-row">
+          <span class="hint">Enter asks the agent. Shift+Enter adds a new line.</span>
+          <div class="buttons">
+            <button id="search-button" type="button">Search web</button>
+            <button class="primary" type="submit">Ask Agent</button>
+          </div>
+        </div>
       </form>
+
       <nav class="quick-links" aria-label="Quick links">${quickLinkMarkup}</nav>
-      <div class="prompt-row" aria-label="Thinking prompts">${promptMarkup}</div>
+      <div class="prompt-row" aria-label="Agent prompts">${promptMarkup}</div>
     </main>
+
+    <script>
+      const form = document.getElementById("ask-form");
+      const input = document.getElementById("ask-input");
+      const searchButton = document.getElementById("search-button");
+
+      function normalizeUrl(value) {
+        if (/^[a-z][a-z\\d+\\-.]*:\\/\\//i.test(value)) {
+          return value;
+        }
+        if (/^localhost(:\\d+)?(\\/.*)?$/i.test(value) || /^\\d{1,3}(\\.\\d{1,3}){3}(:\\d+)?(\\/.*)?$/.test(value)) {
+          return "http://" + value;
+        }
+        if (value.includes(".") && !/\\s/.test(value)) {
+          return "https://" + value;
+        }
+        return null;
+      }
+
+      function askAgent(value) {
+        location.href = "overthink://agent/?prompt=" + encodeURIComponent(value);
+      }
+
+      function searchWeb(value) {
+        const url = normalizeUrl(value);
+        location.href = url || "https://www.bing.com/search?q=" + encodeURIComponent(value);
+      }
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const value = input.value.trim();
+        if (!value) {
+          return;
+        }
+        const url = normalizeUrl(value);
+        if (url) {
+          location.href = url;
+          return;
+        }
+        askAgent(value);
+      });
+
+      searchButton.addEventListener("click", () => {
+        const value = input.value.trim();
+        if (value) {
+          searchWeb(value);
+        }
+      });
+
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          form.requestSubmit();
+        }
+      });
+    </script>
   </body>
 </html>`;
 }
