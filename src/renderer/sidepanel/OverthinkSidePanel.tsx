@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   Bot,
   CheckCircle2,
+  Clock,
   Database,
   Download,
   FilePlus2,
@@ -909,6 +910,24 @@ export function OverthinkSidePanel({ activeTab, agentPrompt }: OverthinkSidePane
         {pendingApprovalSteps.length ? <div className="approval-banner">Approval required before continuing.</div> : null}
 
         <form className="agent-composer" onSubmit={submitAgentTurn}>
+          <div className="agent-composer-toolbar">
+            <button disabled={!activeTab || isBusy} onClick={() => void captureBrief()} title="Read current page" type="button">
+              <Globe2 size={14} />
+              <span>Read</span>
+            </button>
+            <button disabled={isBusy} onClick={() => void attachDocument()} title="Attach document" type="button">
+              <FilePlus2 size={14} />
+              <span>Attach</span>
+            </button>
+            <button disabled={sessions.length === 0} onClick={() => restoreSession(sessions[0]?.id ?? currentSessionId)} title="Open latest conversation" type="button">
+              <Clock size={14} />
+              <span>History</span>
+            </button>
+            <button disabled={recallItems.length === 0} onClick={() => setView("settings")} title="Manage recall" type="button">
+              <Database size={14} />
+              <span>Memory</span>
+            </button>
+          </div>
           <textarea
             aria-label="Ask Overthink"
             disabled={Boolean(activeChatStreamId || activeTaskId)}
@@ -919,7 +938,7 @@ export function OverthinkSidePanel({ activeTab, agentPrompt }: OverthinkSidePane
                 event.currentTarget.form?.requestSubmit();
               }
             }}
-            placeholder={hasModelConfig ? "Ask, research, or tell the agent what to do" : "Configure a model or ask for browser actions"}
+            placeholder={hasModelConfig ? "Ask the agent to read, research, or act on this browser" : "Configure a model or ask for browser actions"}
             rows={3}
             value={draft}
           />
